@@ -6,6 +6,7 @@ import struct
 import threading
 import time
 from dataclasses import dataclass
+from itertools import permutations
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +35,16 @@ ROUND_RESET_DELAY = 1.8
 HIT_IMPACT_DURATION = 0.150
 HIT_STOP_TIME_SCALE = 0.08
 PLAYER_SPRITE_HEIGHT = 152
+RADAR_BLOB_TIMEOUT = 0.34
+PLAYER_PACKET_TIMEOUT = 1.4
+TRACK_DEADBAND_M = 0.025
+TRACK_MAX_SPEED_MPS = 4.8
+TRACK_GATE_LOCKED_M = 0.90
+TRACK_GATE_UNLOCKED_M = 1.75
+TRACK_LOST_AFTER = 0.70
+TRACK_SNAP_DISTANCE_M = 1.15
+RSSI_TRUST_DB = 7.0
+RSSI_RANK_PENALTY_M = 0.62
 MAX_HP = 3
 WIN_ROUNDS = 2
 TARGET_FPS = 60
@@ -111,6 +122,10 @@ def heading_vec(deg):
     return math.sin(rad), math.cos(rad)
 
 
+def radar_to_world(raw_x_m, raw_y_m):
+    return -raw_x_m, ARENA_MAX_Y - raw_y_m
+
+
 def point_segment_distance(point, start, end):
     px, py = point
     ax, ay = start
@@ -146,6 +161,9 @@ class RadarBlob:
     slot: int
     x: float = 0.0
     y: float = 0.0
+    raw_x: float = 0.0
+    raw_y: float = 0.0
+    range_m: float = 0.0
     speed: float = 0.0
     resolution: int = 0
     seen_at: float = 0.0
@@ -172,6 +190,9 @@ class Player:
     last_seen_at: float = 0.0
     rssi: Optional[float] = None
     sprite_phase: float = 0.0
+    track_updated_at: float = 0.0
+    track_slot: Optional[int] = None
+    track_confidence: float = 0.0
 
     def position(self):
         return self.x, self.y
@@ -414,6 +435,7 @@ class SoupocalypseApp:
         self.impact_frames = []
         self.logs = []
         self.running = True
+        self.debug_radar = args.debug_radar
         self.match_state = "ready"
         self.round_message = "PRESS ENTER - FIGHT FOR THE LAST BOWL"
         self.round_reset_at = 0.0
@@ -470,6 +492,9 @@ class SoupocalypseApp:
             player.bubble_until = 0.0
             player.beam_ready_at = now + 0.4
             player.bubble_ready_at = now + 0.4
+            player.track_updated_at = 0.0
+            player.track_slot = None
+            player.track_confidence = 0.0
         self.players[101].x, self.players[101].y, self.players[101].heading = -0.95, 2.55, 90
         self.players[102].x, self.players[102].y, self.players[102].heading = 0.95, 2.55, -90
         self.beams.clear()
@@ -495,11 +520,15 @@ class SoupocalypseApp:
         try:
             if tag == "RADAR" and len(parts) >= 6:
                 slot = int(parts[1])
-                x = float(parts[2]) / 100.0
-                y = float(parts[3]) / 100.0
+                raw_x = float(parts[2]) / 100.0
+                raw_y = float(parts[3]) / 100.0
+                x, y = radar_to_world(raw_x, raw_y)
                 speed = float(parts[4])
                 resolution = int(float(parts[5]))
-                self.radar_blobs[slot] = RadarBlob(slot, x, y, speed, resolution, time.time())
+                self.radar_blobs[slot] = RadarBlob(
+                    slot, x, y, raw_x, raw_y, math.hypot(raw_x, raw_y),
+                    speed, resolution, time.time()
+                )
                 self.update_identity_from_radar()
             elif tag == "PLAYER" and len(parts) >= 6:
                 pid = int(parts[1])
@@ -556,31 +585,130 @@ class SoupocalypseApp:
         now = time.time()
         blobs = [
             blob for blob in self.radar_blobs.values()
-            if blob.resolution > 0 and now - blob.seen_at < 0.45 and
+            if blob.resolution > 0 and now - blob.seen_at < RADAR_BLOB_TIMEOUT and
             ARENA_MIN_X - 0.7 <= blob.x <= ARENA_MAX_X + 0.7 and
-            0.2 <= blob.y <= ARENA_MAX_Y + 0.8
+            ARENA_MIN_Y - 0.8 <= blob.y <= ARENA_MAX_Y + 0.8
         ]
-        if len(blobs) < 2:
+        active_players = [
+            player for player in self.players.values()
+            if player.rssi is not None and now - player.last_seen_at < PLAYER_PACKET_TIMEOUT
+        ]
+        if not blobs or not active_players:
             return
-
-        players = list(self.players.values())
-        if all(p.rssi is not None for p in players):
-            sorted_players = sorted(players, key=lambda p: p.rssi or -999, reverse=True)
-            sorted_blobs = sorted(blobs[:], key=lambda b: b.y)
-            pairs = list(zip(sorted_players, sorted_blobs))
-        else:
-            sorted_players = sorted(players, key=lambda p: p.x)
-            sorted_blobs = sorted(blobs[:], key=lambda b: b.x)
-            pairs = list(zip(sorted_players, sorted_blobs))
+        pairs = self.assign_radar_blobs(active_players, blobs, now)
 
         for player, blob in pairs:
-            old_x, old_y = player.x, player.y
-            alpha = 0.38
-            player.x = clamp(old_x * (1 - alpha) + blob.x * alpha, ARENA_MIN_X, ARENA_MAX_X)
-            player.y = clamp(old_y * (1 - alpha) + blob.y * alpha, ARENA_MIN_Y, ARENA_MAX_Y)
-            player.vx = (player.x - old_x) * TARGET_FPS
-            player.vy = (player.y - old_y) * TARGET_FPS
-            player.last_seen_at = now
+            self.move_player_toward_blob(player, blob, now)
+
+    def assign_radar_blobs(self, active_players, blobs, now):
+        players = sorted(active_players, key=lambda player: player.player_id)
+        if len(blobs) == 1:
+            player = self.best_single_blob_owner(players, blobs[0], now)
+            return [(player, blobs[0])] if player is not None else []
+
+        needed = min(len(players), len(blobs))
+        best_pairs = []
+        best_cost = float("inf")
+        for player_order in permutations(players, needed):
+            for blob_order in permutations(blobs, needed):
+                pairs = list(zip(player_order, blob_order))
+                if len({player.player_id for player, _ in pairs}) != needed:
+                    continue
+                cost = sum(self.blob_assignment_cost(player, blob, now) for player, blob in pairs)
+                if cost >= 1000:
+                    continue
+                cost += self.rssi_rank_cost(pairs)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_pairs = pairs
+        return best_pairs
+
+    def best_single_blob_owner(self, players, blob, now):
+        scored = []
+        for player in players:
+            cost = self.blob_assignment_cost(player, blob, now)
+            if cost < 1000:
+                scored.append((cost, player))
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0])
+        if len(players) > 1 and scored[0][1].track_confidence < 0.35:
+            return None
+        return scored[0][1]
+
+    def blob_assignment_cost(self, player, blob, now):
+        tracking_age = now - player.track_updated_at if player.track_updated_at else 999.0
+        predict_dt = clamp(tracking_age, 0.0, 0.22)
+        predicted_x = player.x + player.vx * predict_dt * 0.35
+        predicted_y = player.y + player.vy * predict_dt * 0.35
+        distance = math.hypot(blob.x - predicted_x, blob.y - predicted_y)
+        gate = TRACK_GATE_UNLOCKED_M if player.track_confidence < 0.35 or tracking_age > TRACK_LOST_AFTER else TRACK_GATE_LOCKED_M
+        gate += min(0.45, max(0.0, tracking_age) * TRACK_MAX_SPEED_MPS * 0.45)
+        if distance > gate:
+            return 1000 + distance
+
+        cost = distance
+        if player.track_slot == blob.slot:
+            cost -= 0.16 * player.track_confidence
+        elif player.track_slot is not None:
+            cost += 0.30 * player.track_confidence
+        return cost
+
+    def rssi_rank_cost(self, pairs):
+        if len(pairs) < 2:
+            return 0.0
+        players = [player for player, _ in pairs if player.rssi is not None]
+        if len(players) < 2:
+            return 0.0
+        rssis = [player.rssi for player in players]
+        diff = max(rssis) - min(rssis)
+        if diff < RSSI_TRUST_DB:
+            return 0.0
+        trust = clamp((diff - RSSI_TRUST_DB) / 12.0, 0.0, 1.0)
+        assigned = {player.player_id: blob for player, blob in pairs}
+        by_rssi = sorted(players, key=lambda player: player.rssi or -999, reverse=True)
+        by_range = sorted((assigned[player.player_id] for player in players), key=lambda blob: blob.range_m)
+        cost = 0.0
+        for rank, player in enumerate(by_rssi):
+            expected_blob = by_range[rank]
+            if assigned[player.player_id].slot != expected_blob.slot:
+                cost += RSSI_RANK_PENALTY_M * trust
+        return cost
+
+    def move_player_toward_blob(self, player, blob, now):
+        old_x, old_y = player.x, player.y
+        target_x = clamp(blob.x, ARENA_MIN_X, ARENA_MAX_X)
+        target_y = clamp(blob.y, ARENA_MIN_Y, ARENA_MAX_Y)
+        dx = target_x - old_x
+        dy = target_y - old_y
+        distance = math.hypot(dx, dy)
+        dt = now - player.track_updated_at if player.track_updated_at else 1.0 / TARGET_FPS
+        dt = clamp(dt, 1.0 / 80.0, 0.12)
+
+        if distance < TRACK_DEADBAND_M:
+            new_x, new_y = old_x, old_y
+        elif player.track_updated_at == 0.0 or player.track_confidence < 0.25 or distance > TRACK_SNAP_DISTANCE_M:
+            new_x, new_y = target_x, target_y
+        else:
+            alpha = 0.32
+            if distance > 0.45:
+                alpha = 0.78
+            elif distance > 0.14:
+                alpha = 0.56
+            desired_step = distance * alpha
+            max_step = TRACK_MAX_SPEED_MPS * dt
+            step = min(distance, desired_step, max_step)
+            scale = step / distance
+            new_x = old_x + dx * scale
+            new_y = old_y + dy * scale
+
+        player.x = clamp(new_x, ARENA_MIN_X, ARENA_MAX_X)
+        player.y = clamp(new_y, ARENA_MIN_Y, ARENA_MAX_Y)
+        player.vx = (player.x - old_x) / dt
+        player.vy = (player.y - old_y) / dt
+        player.track_updated_at = now
+        player.track_slot = blob.slot
+        player.track_confidence = min(1.0, player.track_confidence + 0.16)
 
     def is_hit_stop_active(self, now=None):
         now = time.time() if now is None else now
@@ -774,6 +902,9 @@ class SoupocalypseApp:
                     self.reset_match()
                 elif event.key == pygame.K_m:
                     self.sounds.play("menu_move")
+                elif event.key == pygame.K_d:
+                    self.debug_radar = not self.debug_radar
+                    self.sounds.play("menu_move")
 
     def update_fake_input(self, dt):
         keys = pygame.key.get_pressed()
@@ -785,7 +916,7 @@ class SoupocalypseApp:
             player = self.players[pid]
             left, right, up, down, aim_l, aim_r, beam_key, bubble_key = keyset
             mx = (1 if keys[right] else 0) - (1 if keys[left] else 0)
-            my = (1 if keys[down] else 0) - (1 if keys[up] else 0)
+            my = (1 if keys[up] else 0) - (1 if keys[down] else 0)
             if mx or my:
                 mag = math.hypot(mx, my)
                 mx /= mag
@@ -841,6 +972,12 @@ class SoupocalypseApp:
 
         for player in self.players.values():
             player.sprite_phase += dt * (4.5 + min(3.0, math.hypot(player.vx, player.vy)))
+            if not self.args.fake and player.track_updated_at and now - player.track_updated_at > RADAR_BLOB_TIMEOUT:
+                player.vx *= 0.82
+                player.vy *= 0.82
+                player.track_confidence = max(0.0, player.track_confidence - 0.018)
+                if now - player.track_updated_at > TRACK_LOST_AFTER * 2.0:
+                    player.track_slot = None
         self.beams = [beam for beam in self.beams if now - beam.created_at < beam.duration]
         self.impact_frames = [frame for frame in self.impact_frames if now - frame.created_at < frame.duration]
         alive_particles = []
@@ -880,6 +1017,8 @@ class SoupocalypseApp:
             offset = (random.randint(int(-power), int(power)), random.randint(int(-power), int(power)))
         self.draw_background()
         self.draw_arena(offset)
+        if self.debug_radar:
+            self.draw_radar_debug(offset)
         self.draw_particles(offset, below=True)
         for beam in self.beams:
             self.draw_beam(beam, offset)
@@ -951,6 +1090,30 @@ class SoupocalypseApp:
             pygame.draw.arc(self.screen, rgba(PALETTE["light_brown"], 170), (x, bowl.top - 26, 20, 34), 3.7, 5.5, 2)
         text = self.small_font.render("THE LAST BOWL", True, PALETTE["light_brown"])
         self.screen.blit(text, (bowl.centerx - text.get_width() // 2, bowl.bottom + 5))
+
+    def draw_radar_debug(self, offset):
+        now = time.time()
+        for blob in self.radar_blobs.values():
+            if blob.resolution <= 0 or now - blob.seen_at > 0.7:
+                continue
+            sx, sy = self.world_to_screen(blob.x, blob.y, offset)
+            if blob.slot == 3:
+                color = PALETTE["ice"]
+                radius = 18
+                width = 4
+            else:
+                color = rgba(PALETTE["muted"], 120)
+                radius = 11
+                width = 2
+            pygame.draw.circle(self.screen, color, (sx, sy), radius, width)
+            pygame.draw.line(self.screen, color, (sx - radius - 5, sy), (sx + radius + 5, sy), 1)
+            pygame.draw.line(self.screen, color, (sx, sy - radius - 5), (sx, sy + radius + 5), 1)
+            label = self.small_font.render(
+                f"T{blob.slot} raw {blob.raw_x:.1f},{blob.raw_y:.1f}m",
+                True,
+                color if isinstance(color, tuple) and len(color) == 3 else PALETTE["ice"],
+            )
+            self.screen.blit(label, (sx + radius + 6, sy - label.get_height() // 2))
 
     def draw_particles(self, offset, below):
         now = time.time()
@@ -1079,14 +1242,41 @@ class SoupocalypseApp:
         panel_w = min(390, max(320, w // 4))
         self.draw_player_hud(self.players[101], 24, 22, panel_w)
         self.draw_player_hud(self.players[102], w - panel_w - 24, 22, panel_w)
-        controls = "FAKE: P1 WASD QE F/R     P2 ARROWS , .  / RSHIFT     ENTER RESET"
-        text = self.small_font.render(controls, True, PALETTE["muted"])
+        footer_text = (
+            "FAKE: P1 WASD QE F/R     P2 ARROWS , .  / RSHIFT     ENTER RESET     D RADAR DEBUG"
+            if self.args.fake else self.hardware_status_text()
+        )
+        text = self.small_font.render(footer_text, True, PALETTE["muted"])
         footer = pygame.Rect(0, self.screen.get_height() - 38, w, 38)
         pygame.draw.rect(self.screen, rgba(PALETTE["panel"], 225), footer)
         self.screen.blit(text, (w // 2 - text.get_width() // 2, footer.centery - text.get_height() // 2))
         for i, (_, log) in enumerate(self.logs[-3:]):
             line = self.small_font.render(log, True, PALETTE["muted"])
             self.screen.blit(line, (24, self.screen.get_height() - 106 + i * 20))
+
+    def hardware_status_text(self):
+        now = time.time()
+        live_blobs = [
+            blob for blob in self.radar_blobs.values()
+            if blob.resolution > 0 and now - blob.seen_at < 0.7
+        ]
+        if live_blobs:
+            blob = max(live_blobs, key=lambda item: item.resolution)
+            radar = (
+                f"RADAR T{blob.slot} x={blob.x:.2f}m y={blob.y:.2f}m "
+                f"rawY={blob.raw_y:.2f}m res={blob.resolution}"
+            )
+        else:
+            radar = "RADAR waiting"
+        player_bits = []
+        for player in self.players.values():
+            if player.last_seen_at and now - player.last_seen_at < 1.4:
+                rssi = f"{player.rssi:.0f}dBm" if player.rssi is not None else "?dBm"
+                player_bits.append(
+                    f"P{player.player_id} hdg={player.heading:.0f} {rssi} lock={player.track_confidence:.1f}"
+                )
+        players = " | ".join(player_bits) if player_bits else "PLAYERS waiting"
+        return f"{radar}     {players}"
 
     def draw_player_hud(self, player, x, y, width):
         panel = pygame.Rect(x, y, width, 78)
@@ -1195,6 +1385,7 @@ def main():
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--no-audio", action="store_true")
+    parser.add_argument("--debug-radar", action="store_true", help="Draw live radar target debug markers, including T3.")
     parser.add_argument("--smoke-test", type=int, default=0, help="Run this many frames and exit.")
     args = parser.parse_args()
     SoupocalypseApp(args).run()
