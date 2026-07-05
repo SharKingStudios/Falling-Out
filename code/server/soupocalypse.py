@@ -5,7 +5,7 @@ import random
 import struct
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import permutations
 from pathlib import Path
 from typing import Optional
@@ -26,7 +26,8 @@ ARENA_MIN_Y = 0.8
 ARENA_MAX_Y = 4.5
 PLAYER_RADIUS_M = 0.22
 BEAM_RANGE_M = 5.0
-BEAM_WIDTH_M = 0.34
+BEAM_WIDTH_M = 0.68
+BEAM_AIM_ASSIST_DEG = 20.0
 BUBBLE_RADIUS_M = 0.62
 BUBBLE_DURATION = 0.70
 BEAM_COOLDOWN = 0.82
@@ -35,6 +36,7 @@ ROUND_RESET_DELAY = 1.8
 HIT_IMPACT_DURATION = 0.150
 HIT_STOP_TIME_SCALE = 0.08
 PLAYER_SPRITE_HEIGHT = 152
+PLAYER_SHADOW_SCALE = 0.50
 RADAR_BLOB_TIMEOUT = 0.34
 PLAYER_PACKET_TIMEOUT = 1.4
 TRACK_DEADBAND_M = 0.025
@@ -45,6 +47,7 @@ TRACK_LOST_AFTER = 0.70
 TRACK_SNAP_DISTANCE_M = 1.15
 RSSI_TRUST_DB = 7.0
 RSSI_RANK_PENALTY_M = 0.62
+START_SIDE_BIAS_M = 1.10
 MAX_HP = 3
 WIN_ROUNDS = 2
 TARGET_FPS = 60
@@ -61,6 +64,40 @@ PLAYER_SPRITES = {
 ACTION_NONE = 0
 ACTION_BEAM = 1
 ACTION_BUBBLE = 2
+MAGCAL_COMMAND_MS = 18000
+MAGCAL_DONE_HOLD_S = 6.0
+
+MENU_STATES = {"select", "countdown", "starting"}
+MENU_DUPLICATE_PICKS = True
+MENU_CURSOR_HISTORY = 9
+MENU_HOVER_ANIM = 0.14
+MENU_SELECT_SLAM = 0.34
+MENU_DESELECT_ANIM = 0.28
+MENU_PANEL_REVEAL = 0.38
+MENU_COUNTDOWN_STEP = 0.68
+MENU_TRANSITION_DELAY = 0.55
+MENU_SHAKE_SELECT = 5.0
+MENU_SHAKE_GO = 13.0
+MENU_SFX_MASTER_VOLUME = 0.92
+MENU_SFX_VOLUME = {
+    "menu_hover": 0.72,
+    "menu_hover_p1": 0.76,
+    "menu_hover_p2": 0.76,
+    "menu_lock": 0.95,
+    "menu_cancel": 0.82,
+    "menu_deny": 0.75,
+    "count_3": 0.92,
+    "count_2": 0.92,
+    "count_1": 0.98,
+    "count_go": 1.0,
+    "menu_panel": 0.86,
+    "menu_splash": 0.78,
+    "menu_fire": 0.66,
+    "menu_transition": 0.92,
+}
+
+MAGCAL_ACTIVE_STATES = {"REQUESTED", "START", "RUNNING"}
+MAGCAL_DONE_STATES = {"OK", "ERR", "RESET"}
 
 PALETTE = {
     "bg": (18, 13, 11),
@@ -87,9 +124,88 @@ PALETTE = {
     "backdrop": (65, 88, 97),
 }
 
+CHARACTER_SLOTS = (
+    {
+        "id": "broth_beast",
+        "name": "Broth Beast",
+        "portrait": SPRITE_DIR / "p1_temp.png",
+        "theme": (55, 181, 118),
+        "secondary": (255, 235, 173),
+        "dark": (21, 77, 55),
+        "highlight": (168, 255, 203),
+        "tagline": "simmer guard",
+    },
+    {
+        "id": "noodle_wyrm",
+        "name": "Noodle Wyrm",
+        "portrait": SPRITE_DIR / "p2_temp.png",
+        "theme": (255, 125, 112),
+        "secondary": (255, 235, 173),
+        "dark": (116, 39, 43),
+        "highlight": (255, 204, 166),
+        "tagline": "spice striker",
+    },
+    {
+        "id": "bloo",
+        "name": "Bloo",
+        "portrait": SPRITE_DIR / "bloo.png",
+        "theme": (56, 201, 255),
+        "secondary": (113, 255, 222),
+        "dark": (18, 68, 107),
+        "highlight": (223, 251, 255),
+        "tagline": "cold snap",
+    },
+    {
+        "id": "party_cat",
+        "name": "Party Cat",
+        "portrait": SPRITE_DIR / "party-cat.png",
+        "theme": (255, 205, 64),
+        "secondary": (255, 105, 180),
+        "dark": (126, 73, 20),
+        "highlight": (255, 249, 178),
+        "tagline": "festival fury",
+    },
+    {
+        "id": "wasteland_wing",
+        "name": "Wasteland Wing",
+        "portrait": SPRITE_DIR / "pigeon.png",
+        "theme": (157, 132, 255),
+        "secondary": (86, 226, 188),
+        "dark": (54, 43, 112),
+        "highlight": (232, 225, 255),
+        "tagline": "scrap dive",
+    },
+    {
+        "id": "the_goat",
+        "name": "The Goat",
+        "portrait": SPRITE_DIR / "the-goat.png",
+        "theme": (255, 145, 48),
+        "secondary": (82, 218, 128),
+        "dark": (99, 48, 16),
+        "highlight": (255, 222, 153),
+        "tagline": "bowl bandit",
+    },
+)
+
 
 def clamp(value, lo, hi):
     return max(lo, min(hi, value))
+
+
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+
+def ease_out_cubic(t):
+    t = clamp(t, 0.0, 1.0)
+    return 1.0 - (1.0 - t) ** 3
+
+
+def ease_out_back(t):
+    t = clamp(t, 0.0, 1.0)
+    c1 = 1.70158
+    c3 = c1 + 1.0
+    return 1.0 + c3 * (t - 1.0) ** 3 + c1 * (t - 1.0) ** 2
 
 
 def channel(value):
@@ -120,6 +236,10 @@ def normalize_deg(deg):
 def heading_vec(deg):
     rad = math.radians(deg)
     return math.sin(rad), math.cos(rad)
+
+
+def vec_heading(dx, dy):
+    return math.degrees(math.atan2(dx, dy))
 
 
 def radar_to_world(raw_x_m, raw_y_m):
@@ -202,6 +322,30 @@ class Player:
 
 
 @dataclass
+class MagCalStatus:
+    player_id: int
+    state: str
+    progress: int = 0
+    quality: int = 0
+    samples: int = 0
+    elapsed_ms: int = 0
+    remaining_ms: int = 0
+    radius_x: int = 0
+    radius_y: int = 0
+    radius_z: int = 0
+    avg_radius: int = 0
+    flags: int = 0
+    rssi: Optional[float] = None
+    seen_at: float = 0.0
+
+    def active(self, now):
+        return self.state in MAGCAL_ACTIVE_STATES and now - self.seen_at < 40.0
+
+    def visible(self, now):
+        return self.active(now) or (self.state in MAGCAL_DONE_STATES and now - self.seen_at < MAGCAL_DONE_HOLD_S)
+
+
+@dataclass
 class BeamEffect:
     start: tuple
     end: tuple
@@ -241,6 +385,44 @@ class QueuedAction:
     player_id: int
     action: int
     queued_at: float
+
+
+@dataclass
+class MenuPlayerState:
+    player_id: int
+    hover_index: int = 0
+    selected_index: Optional[int] = None
+    hover_changed_at: float = 0.0
+    selected_at: float = 0.0
+    cancel_until: float = 0.0
+    deny_until: float = 0.0
+    cursor_history: list = field(default_factory=list)
+
+
+@dataclass
+class MenuParticle:
+    x: float
+    y: float
+    vx: float
+    vy: float
+    color: tuple
+    size: float
+    created_at: float
+    life: float
+    kind: str = "pixel"
+    spin: float = 0.0
+
+
+@dataclass
+class MenuSlash:
+    x: float
+    y: float
+    angle: float
+    length: float
+    color: tuple
+    created_at: float
+    life: float
+    width: float = 18.0
 
 
 class SerialTransport:
@@ -311,6 +493,20 @@ class SoundBank:
     def make_sounds(self):
         self.sounds["menu_move"] = self.sequence([(880, 0.045), (1175, 0.035)], 0.28, "square")
         self.sounds["menu_select"] = self.sequence([(660, 0.055), (990, 0.055), (1320, 0.075)], 0.34, "square")
+        self.sounds["menu_hover"] = self.sequence([(1046, 0.026), (1568, 0.024)], 0.34, "square")
+        self.sounds["menu_hover_p1"] = self.sequence([(988, 0.024), (1480, 0.026)], 0.36, "square")
+        self.sounds["menu_hover_p2"] = self.sequence([(1175, 0.024), (1760, 0.026)], 0.36, "square")
+        self.sounds["menu_lock"] = self.menu_lock_sound()
+        self.sounds["menu_cancel"] = self.sweep(760, 270, 0.16, 0.34, "triangle")
+        self.sounds["menu_deny"] = self.sequence([(164, 0.045), (123, 0.055), (164, 0.035)], 0.32, "square")
+        self.sounds["count_3"] = self.menu_count_sound(360, 650, 0.22, 0.44)
+        self.sounds["count_2"] = self.menu_count_sound(520, 980, 0.20, 0.46)
+        self.sounds["count_1"] = self.menu_count_sound(220, 540, 0.26, 0.54)
+        self.sounds["count_go"] = self.menu_go_sound()
+        self.sounds["menu_panel"] = self.sweep(420, 980, 0.12, 0.36, "triangle")
+        self.sounds["menu_splash"] = self.noise_burst(0.11, 0.38, 90, 740)
+        self.sounds["menu_fire"] = self.noise_burst(0.08, 0.30, 900, 2600)
+        self.sounds["menu_transition"] = self.sweep(330, 1720, 0.34, 0.42, "square")
         self.sounds["ready"] = self.sequence([(392, 0.06), (523, 0.06), (784, 0.09)], 0.38, "triangle")
         self.sounds["swing"] = self.sweep(620, 980, 0.09, 0.26, "triangle")
         self.sounds["beam"] = self.beam_sound()
@@ -320,6 +516,7 @@ class SoundBank:
         self.sounds["ko"] = self.sequence([(196, 0.12), (147, 0.12), (98, 0.22)], 0.52, "triangle")
         self.sounds["round"] = self.sequence([(523, 0.06), (659, 0.06), (784, 0.06), (1046, 0.14)], 0.42, "square")
         self.sounds["invalid"] = self.sequence([(190, 0.055), (142, 0.08)], 0.24, "square")
+        self.sounds["round_win"] = self.sounds["round"]
 
     def envelope(self, i, total):
         if total <= 1:
@@ -382,6 +579,62 @@ class SoundBank:
             samples.append((body + crackle) * self.envelope(i, total))
         return self.build(samples, 0.46)
 
+    def menu_lock_sound(self):
+        rate = 44100
+        total = int(rate * 0.20)
+        samples = []
+        phase_low = 0.0
+        phase_high = 0.0
+        rng = random.Random(744)
+        for i in range(total):
+            t = i / max(1, total - 1)
+            low_freq = 96 + 42 * (1.0 - t)
+            high_freq = 1120 + 420 * t
+            phase_low += math.tau * low_freq / rate
+            phase_high += math.tau * high_freq / rate
+            transient = (rng.random() * 2 - 1) * 0.70 * max(0.0, 1.0 - t * 12.0)
+            snap = (1.0 if math.sin(phase_high) > 0 else -1.0) * 0.38
+            thump = math.sin(phase_low) * 0.72 * (1.0 - t)
+            samples.append((thump + snap + transient) * self.envelope(i, total))
+        return self.build(samples, 0.46)
+
+    def menu_count_sound(self, start_freq, end_freq, duration, gain):
+        rate = 44100
+        total = int(rate * duration)
+        samples = []
+        phase_a = 0.0
+        phase_b = 0.0
+        rng = random.Random(int(start_freq * 7 + end_freq))
+        for i in range(total):
+            t = i / max(1, total - 1)
+            freq = start_freq + (end_freq - start_freq) * min(1.0, t * 1.6)
+            phase_a += math.tau * freq / rate
+            phase_b += math.tau * (freq * 0.48) / rate
+            noise = (rng.random() * 2 - 1) * 0.20 * max(0.0, 1.0 - t * 5.0)
+            body = math.sin(phase_b) * 0.68 * (1.0 - t * 0.35)
+            edge = (1.0 if math.sin(phase_a) > 0 else -1.0) * 0.22
+            samples.append((body + edge + noise) * self.envelope(i, total))
+        return self.build(samples, gain)
+
+    def menu_go_sound(self):
+        rate = 44100
+        total = int(rate * 0.38)
+        samples = []
+        phase_rise = 0.0
+        phase_bass = 0.0
+        rng = random.Random(2026)
+        for i in range(total):
+            t = i / max(1, total - 1)
+            rise_freq = 220 + 1480 * (t ** 0.55)
+            bass_freq = 82 + 58 * math.sin(t * math.tau)
+            phase_rise += math.tau * rise_freq / rate
+            phase_bass += math.tau * bass_freq / rate
+            sparkle = (1.0 if math.sin(phase_rise) > 0 else -1.0) * 0.23 * (1.0 - t * 0.45)
+            bass = math.sin(phase_bass) * 0.70 * (1.0 - t)
+            crack = (rng.random() * 2 - 1) * 0.36 * max(0.0, 1.0 - t * 1.8)
+            samples.append((sparkle + bass + crack) * self.envelope(i, total))
+        return self.build(samples, 0.50)
+
     def noise_burst(self, duration, gain, lo, hi):
         rate = 44100
         total = int(rate * duration)
@@ -402,7 +655,7 @@ class SoundBank:
             return
         sound = self.sounds.get(name)
         if sound:
-            sound.set_volume(volume)
+            sound.set_volume(clamp(volume, 0.0, 1.0))
             sound.play()
 
 
@@ -436,8 +689,8 @@ class SoupocalypseApp:
         self.logs = []
         self.running = True
         self.debug_radar = args.debug_radar
-        self.match_state = "ready"
-        self.round_message = "PRESS ENTER - FIGHT FOR THE LAST BOWL"
+        self.match_state = "select"
+        self.round_message = "CHOOSE YOUR SOUP FIGHTER"
         self.round_reset_at = 0.0
         self.freeze_until = 0.0
         self.hit_stop_until = 0.0
@@ -447,7 +700,23 @@ class SoupocalypseApp:
         self.last_tick = time.time()
         self.fake_actions = {101: 0, 102: 0}
         self.fake_last_heading = {101: 90.0, 102: -90.0}
+        self.calibration_select_until = 0.0
+        self.mag_cal_status = {}
         self.sprite_cache = {}
+        self.player_sprite_paths = dict(PLAYER_SPRITES)
+        now = time.time()
+        self.menu_players = {
+            101: MenuPlayerState(101, hover_index=0, hover_changed_at=now),
+            102: MenuPlayerState(102, hover_index=2, hover_changed_at=now),
+        }
+        self.menu_particles = []
+        self.menu_slashes = []
+        self.menu_countdown_started_at = 0.0
+        self.menu_countdown_last_step = -1
+        self.menu_transition_started_at = 0.0
+        self.menu_notice = ""
+        self.menu_notice_until = 0.0
+        self.character_cache = {}
         self.bg_cache = None
         self.bg_cache_size = None
 
@@ -484,6 +753,54 @@ class SoupocalypseApp:
         if self.transport is not None:
             self.transport.write_line(f"FX,{name}")
 
+    def send_player_command(self, player_id, command, value_ms=0):
+        if self.transport is None:
+            self.log("hardware command ignored: no bridge serial")
+            self.sounds.play("invalid")
+            return False
+        self.transport.write_line(f"PLAYERCMD,{player_id},{command},{int(value_ms)}")
+        self.log(f"P{player_id} {command} sent")
+        self.sounds.play("ready")
+        return True
+
+    def set_local_magcal_requested(self, player_id, duration_ms):
+        self.mag_cal_status[player_id] = MagCalStatus(
+            player_id=player_id,
+            state="REQUESTED",
+            remaining_ms=duration_ms,
+            seen_at=time.time(),
+        )
+
+    def handle_magcal_line(self, parts):
+        if len(parts) < 13:
+            return
+        pid = int(parts[1])
+        state = parts[2].upper()
+        old_state = self.mag_cal_status.get(pid).state if pid in self.mag_cal_status else None
+        status = MagCalStatus(
+            player_id=pid,
+            state=state,
+            progress=clamp(int(float(parts[3])), 0, 100),
+            quality=clamp(int(float(parts[4])), 0, 100),
+            samples=int(float(parts[5])),
+            elapsed_ms=int(float(parts[6])),
+            remaining_ms=int(float(parts[7])),
+            radius_x=int(float(parts[8])),
+            radius_y=int(float(parts[9])),
+            radius_z=int(float(parts[10])),
+            avg_radius=int(float(parts[11])),
+            flags=int(float(parts[12])),
+            rssi=float(parts[13]) if len(parts) >= 14 else None,
+            seen_at=time.time(),
+        )
+        self.mag_cal_status[pid] = status
+        if state == "OK" and old_state != "OK":
+            self.log(f"P{pid} compass calibration saved")
+            self.sounds.play("round_win")
+        elif state == "ERR" and old_state != "ERR":
+            self.log(f"P{pid} compass calibration failed; move bigger")
+            self.sounds.play("invalid")
+
     def reset_round(self):
         now = time.time()
         for player in self.players.values():
@@ -492,11 +809,6 @@ class SoupocalypseApp:
             player.bubble_until = 0.0
             player.beam_ready_at = now + 0.4
             player.bubble_ready_at = now + 0.4
-            player.track_updated_at = 0.0
-            player.track_slot = None
-            player.track_confidence = 0.0
-        self.players[101].x, self.players[101].y, self.players[101].heading = -0.95, 2.55, 90
-        self.players[102].x, self.players[102].y, self.players[102].heading = 0.95, 2.55, -90
         self.beams.clear()
         self.particles.clear()
         self.impact_frames.clear()
@@ -508,9 +820,55 @@ class SoupocalypseApp:
         self.sounds.play("ready")
 
     def reset_match(self):
+        self.apply_menu_character_choices()
         for player in self.players.values():
             player.wins = 0
         self.reset_round()
+
+    def open_character_select(self):
+        now = time.time()
+        self.match_state = "select"
+        self.round_message = "CHOOSE YOUR SOUP FIGHTER"
+        self.round_reset_at = 0.0
+        self.freeze_until = 0.0
+        self.hit_stop_until = 0.0
+        self.pending_actions.clear()
+        self.beams.clear()
+        self.impact_frames.clear()
+        self.menu_particles.clear()
+        self.menu_slashes.clear()
+        self.menu_countdown_started_at = 0.0
+        self.menu_countdown_last_step = -1
+        self.menu_transition_started_at = 0.0
+        for player in self.players.values():
+            player.hp = MAX_HP
+            player.alive = True
+            player.bubble_until = 0.0
+            player.beam_ready_at = 0.0
+            player.bubble_ready_at = 0.0
+        for state in self.menu_players.values():
+            state.selected_index = None
+            state.selected_at = 0.0
+            state.cancel_until = 0.0
+            state.deny_until = 0.0
+            state.cursor_history.clear()
+            state.hover_changed_at = now
+
+    def apply_menu_character_choices(self):
+        defaults = {101: 0, 102: 1}
+        for pid, player in self.players.items():
+            state = self.menu_players.get(pid)
+            index = state.selected_index if state and state.selected_index is not None else defaults.get(pid, 0)
+            character = CHARACTER_SLOTS[index]
+            player.label = character["name"]
+            player.color = character["theme"]
+            player.dark_color = character["dark"]
+            self.player_sprite_paths[pid] = character["portrait"]
+        self.sprite_cache.clear()
+
+    def play_menu_sound(self, name, extra=1.0):
+        volume = MENU_SFX_VOLUME.get(name, 1.0) * MENU_SFX_MASTER_VOLUME * extra
+        self.sounds.play(name, volume)
 
     def handle_serial_line(self, line):
         parts = [p.strip() for p in line.split(",")]
@@ -556,7 +914,9 @@ class SoupocalypseApp:
                 heading = float(parts[2])
                 if pid in self.players:
                     self.players[pid].heading = heading
-            elif tag in ("LOG", "BRIDGE_BOOT", "WARN", "ERR"):
+            elif tag == "MAGCAL":
+                self.handle_magcal_line(parts)
+            elif tag in ("LOG", "BRIDGE_BOOT", "WARN", "ERR", "PLAYERCMD_SENT", "PLAYERCMD_ERR"):
                 self.log(line[:90])
         except ValueError:
             self.log(f"bad line: {line[:80]}")
@@ -648,6 +1008,11 @@ class SoupocalypseApp:
             return 1000 + distance
 
         cost = distance
+        if player.track_confidence < 0.35 and player.track_slot is None:
+            if player.player_id == 101 and blob.x > 0.0:
+                cost += START_SIDE_BIAS_M + blob.x * 0.35
+            elif player.player_id == 102 and blob.x < 0.0:
+                cost += START_SIDE_BIAS_M + abs(blob.x) * 0.35
         if player.track_slot == blob.slot:
             cost -= 0.16 * player.track_confidence
         elif player.track_slot is not None:
@@ -715,8 +1080,8 @@ class SoupocalypseApp:
         return now < self.hit_stop_until
 
     def request_action(self, player, action):
-        if self.match_state == "ready":
-            self.reset_match()
+        if self.match_state in MENU_STATES:
+            self.handle_menu_action(player, action)
             return
         if self.match_state != "playing":
             return
@@ -724,6 +1089,86 @@ class SoupocalypseApp:
             self.queue_action(player, action)
             return
         self.perform_action(player, action)
+
+    def handle_menu_action(self, player, action):
+        state = self.menu_players.get(player.player_id)
+        if state is None:
+            return
+        now = time.time()
+        if action == ACTION_BEAM:
+            if state.selected_index is not None:
+                self.menu_deny(state, "LOCKED")
+                return
+            index = state.hover_index
+            if index is None or not (0 <= index < len(CHARACTER_SLOTS)):
+                self.menu_deny(state, "NO TARGET")
+                return
+            if not MENU_DUPLICATE_PICKS:
+                for other in self.menu_players.values():
+                    if other.player_id != state.player_id and other.selected_index == index:
+                        self.menu_deny(state, "TAKEN")
+                        return
+            state.selected_index = index
+            state.selected_at = now
+            state.cancel_until = 0.0
+            character = CHARACTER_SLOTS[index]
+            self.menu_notice = f"P{1 if state.player_id == 101 else 2} LOCKED!"
+            self.menu_notice_until = now + 0.55
+            self.play_menu_sound("menu_lock")
+            self.play_menu_sound("menu_panel", 0.88)
+            self.play_menu_sound("menu_splash", 0.72)
+            self.spawn_menu_lock_fx(state.player_id, index)
+            self.shake(0.12, MENU_SHAKE_SELECT)
+            if self.all_menu_players_selected():
+                self.start_menu_countdown()
+            return
+        if action == ACTION_BUBBLE:
+            if state.selected_index is None:
+                self.menu_deny(state, "PICK FIRST")
+                return
+            old_index = state.selected_index
+            state.selected_index = None
+            state.selected_at = 0.0
+            state.cancel_until = now + MENU_DESELECT_ANIM
+            self.cancel_menu_countdown()
+            self.menu_notice = f"P{1 if state.player_id == 101 else 2} CANCELLED"
+            self.menu_notice_until = now + 0.55
+            self.play_menu_sound("menu_cancel")
+            self.spawn_menu_cancel_fx(state.player_id, old_index)
+            self.shake(0.08, 3.0)
+            return
+        self.menu_deny(state, "NOPE")
+
+    def all_menu_players_selected(self):
+        return all(state.selected_index is not None for state in self.menu_players.values())
+
+    def start_menu_countdown(self):
+        if self.match_state == "countdown":
+            return
+        now = time.time()
+        self.match_state = "countdown"
+        self.menu_countdown_started_at = now
+        self.menu_countdown_last_step = -1
+        self.menu_transition_started_at = 0.0
+
+    def cancel_menu_countdown(self):
+        if self.match_state in ("countdown", "starting"):
+            self.match_state = "select"
+            self.menu_countdown_started_at = 0.0
+            self.menu_countdown_last_step = -1
+            self.menu_transition_started_at = 0.0
+            self.menu_notice = "WAIT!"
+            self.menu_notice_until = time.time() + 0.65
+
+    def menu_deny(self, state, label):
+        now = time.time()
+        state.deny_until = now + 0.24
+        self.menu_notice = label
+        self.menu_notice_until = now + 0.38
+        self.play_menu_sound("menu_deny")
+        self.shake(0.06, 2.2)
+        x, y = self.menu_visual_cursor_pos(state.player_id)
+        self.spawn_menu_sparks(x, y, PALETTE["bad"], 14, 260)
 
     def queue_action(self, player, action):
         now = time.time()
@@ -768,12 +1213,26 @@ class SoupocalypseApp:
             self.spawn_ring(player.x, player.y, PALETTE["bubble"], 34)
             self.send_fx("bubble")
 
+    def assisted_beam_direction(self, player, target, dx, dy):
+        if not target.alive:
+            return dx, dy
+        tx = target.x - player.x
+        ty = target.y - player.y
+        distance = math.hypot(tx, ty)
+        if distance <= 0.001 or distance > BEAM_RANGE_M + PLAYER_RADIUS_M:
+            return dx, dy
+        target_heading = vec_heading(tx, ty)
+        if abs(normalize_deg(target_heading - player.heading)) <= BEAM_AIM_ASSIST_DEG:
+            return tx / distance, ty / distance
+        return dx, dy
+
     def fire_beam(self, player):
         now = time.time()
         dx, dy = heading_vec(player.heading)
+        target = self.players[102 if player.player_id == 101 else 101]
+        dx, dy = self.assisted_beam_direction(player, target, dx, dy)
         start = (player.x + dx * 0.18, player.y + dy * 0.18)
         end = (player.x + dx * BEAM_RANGE_M, player.y + dy * BEAM_RANGE_M)
-        target = self.players[102 if player.player_id == 101 else 101]
         hit_point = None
         blocked = False
         if target.alive:
@@ -797,7 +1256,7 @@ class SoupocalypseApp:
 
         beam = BeamEffect(start, end, player.color, now, hit_point=hit_point, blocked=blocked)
         self.beams.append(beam)
-        self.spawn_beam_particles(start, end, player.color)
+        self.spawn_beam_particles(start, hit_point if hit_point else end, player.color)
         self.spawn_burst(start[0], start[1], player.color, 28, power=0.7)
         self.sounds.play("beam")
         self.send_fx("beam_fire")
@@ -898,13 +1357,31 @@ class SoupocalypseApp:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
                 elif event.key == pygame.K_RETURN:
-                    self.sounds.play("menu_select")
-                    self.reset_match()
+                    if self.match_state in MENU_STATES:
+                        if self.all_menu_players_selected():
+                            self.start_menu_countdown()
+                            self.play_menu_sound("menu_select", 0.9)
+                        else:
+                            self.menu_notice = "LOCK BOTH PLAYERS"
+                            self.menu_notice_until = time.time() + 0.6
+                            self.play_menu_sound("menu_deny")
+                    else:
+                        self.sounds.play("menu_select")
+                        self.reset_match()
                 elif event.key == pygame.K_m:
                     self.sounds.play("menu_move")
                 elif event.key == pygame.K_d:
                     self.debug_radar = not self.debug_radar
                     self.sounds.play("menu_move")
+                elif event.key == pygame.K_0:
+                    self.calibration_select_until = time.time() + 6.0
+                    self.log("calibrate: press 1 for P101 or 2 for P102")
+                    self.sounds.play("menu_select")
+                elif event.key in (pygame.K_1, pygame.K_2) and time.time() < self.calibration_select_until:
+                    player_id = 101 if event.key == pygame.K_1 else 102
+                    self.calibration_select_until = 0.0
+                    if self.send_player_command(player_id, "MAGCAL", MAGCAL_COMMAND_MS):
+                        self.set_local_magcal_requested(player_id, MAGCAL_COMMAND_MS)
 
     def update_fake_input(self, dt):
         keys = pygame.key.get_pressed()
@@ -957,14 +1434,12 @@ class SoupocalypseApp:
         if self.args.fake:
             self.update_fake_input(dt)
 
+        if self.match_state in MENU_STATES:
+            self.update_character_select(dt, now)
+
         if self.match_state in ("round_over", "match_over") and now >= self.round_reset_at:
             if self.match_state == "match_over":
-                self.match_state = "ready"
-                self.round_message = "PRESS ENTER - FIGHT FOR THE LAST BOWL"
-                for player in self.players.values():
-                    player.wins = 0
-                    player.hp = MAX_HP
-                    player.alive = True
+                self.open_character_select()
             else:
                 self.reset_round()
 
@@ -993,6 +1468,210 @@ class SoupocalypseApp:
         if now > self.shake_until:
             self.shake_power *= 0.85
 
+    def update_character_select(self, dt, now):
+        rects = self.menu_card_rects()
+        for state in self.menu_players.values():
+            if state.selected_index is None:
+                cursor = self.menu_cursor_screen(self.players[state.player_id])
+                hover = self.menu_hover_from_cursor(cursor, rects)
+                if hover != state.hover_index:
+                    state.hover_index = hover
+                    state.hover_changed_at = now
+                    sound = "menu_hover_p1" if state.player_id == 101 else "menu_hover_p2"
+                    self.play_menu_sound(sound)
+                    cx, cy = rects[hover].center
+                    self.spawn_menu_sparks(cx, cy, self.menu_player_base_color(state.player_id), 10, 180)
+            visual = self.menu_visual_cursor_pos(state.player_id, rects)
+            state.cursor_history.append((visual[0], visual[1], now))
+            state.cursor_history = state.cursor_history[-MENU_CURSOR_HISTORY:]
+
+        if self.match_state == "countdown":
+            self.update_menu_countdown(now)
+        elif self.match_state == "starting":
+            if self.menu_transition_started_at and now - self.menu_transition_started_at >= MENU_TRANSITION_DELAY:
+                self.reset_match()
+
+        alive_particles = []
+        for particle in self.menu_particles:
+            age = now - particle.created_at
+            if age < particle.life:
+                particle.x += particle.vx * dt
+                particle.y += particle.vy * dt
+                particle.vx *= 0.972
+                particle.vy *= 0.972
+                if particle.kind == "fire":
+                    particle.vy -= 18.0 * dt
+                particle.spin += dt * 12.0
+                alive_particles.append(particle)
+        self.menu_particles = alive_particles[-1200:]
+
+        self.menu_slashes = [
+            slash for slash in self.menu_slashes
+            if now - slash.created_at < slash.life
+        ][-80:]
+
+    def update_menu_countdown(self, now):
+        if not self.all_menu_players_selected():
+            self.cancel_menu_countdown()
+            return
+        if self.menu_countdown_started_at <= 0.0:
+            self.menu_countdown_started_at = now
+        labels = ("3", "2", "1", "GO!")
+        elapsed = now - self.menu_countdown_started_at
+        step = int(elapsed / MENU_COUNTDOWN_STEP)
+        if step < len(labels) and step != self.menu_countdown_last_step:
+            self.menu_countdown_last_step = step
+            sound = ("count_3", "count_2", "count_1", "count_go")[step]
+            self.play_menu_sound(sound)
+            self.spawn_menu_countdown_fx(labels[step], step)
+            self.shake(0.10 if step < 3 else 0.20, 5.0 if step < 3 else MENU_SHAKE_GO)
+        if step >= len(labels) and self.menu_transition_started_at <= 0.0:
+            self.match_state = "starting"
+            self.menu_transition_started_at = now
+            self.play_menu_sound("menu_transition")
+            self.spawn_menu_transition_fx()
+            self.shake(0.24, MENU_SHAKE_GO)
+
+    def menu_player_base_color(self, player_id):
+        return PALETTE["p1"] if player_id == 101 else PALETTE["p2"]
+
+    def selected_character_for_player(self, player_id):
+        state = self.menu_players.get(player_id)
+        if state is None or state.selected_index is None:
+            return None
+        return CHARACTER_SLOTS[state.selected_index]
+
+    def menu_card_rects(self):
+        w, h = self.screen.get_size()
+        card_w = min(230, max(132, int(w * 0.145)))
+        card_h = min(250, max(158, int(h * 0.245)))
+        gap_x = max(18, int(w * 0.018))
+        gap_y = max(16, int(h * 0.034))
+        grid_w = card_w * 3 + gap_x * 2
+        grid_h = card_h * 2 + gap_y
+        top = max(132, int(h * 0.22))
+        if top + grid_h > h - 92:
+            top = max(112, h - 92 - grid_h)
+        left = (w - grid_w) // 2
+        rects = []
+        for index in range(6):
+            col = index % 3
+            row = index // 3
+            rects.append(pygame.Rect(left + col * (card_w + gap_x), top + row * (card_h + gap_y), card_w, card_h))
+        return rects
+
+    def menu_cursor_screen(self, player):
+        w, h = self.screen.get_size()
+        tx = (player.x - ARENA_MIN_X) / (ARENA_MAX_X - ARENA_MIN_X)
+        ty = (player.y - ARENA_MIN_Y) / (ARENA_MAX_Y - ARENA_MIN_Y)
+        sx = lerp(w * 0.12, w * 0.88, clamp(tx, 0.0, 1.0))
+        sy = lerp(h * 0.76, h * 0.24, clamp(ty, 0.0, 1.0))
+        return sx, sy
+
+    def menu_hover_from_cursor(self, cursor, rects):
+        cx, cy = cursor
+        best_index = 0
+        best_score = float("inf")
+        for index, rect in enumerate(rects):
+            dx = cx - rect.centerx
+            dy = cy - rect.centery
+            score = dx * dx + dy * dy
+            if rect.inflate(54, 54).collidepoint(cx, cy):
+                score *= 0.35
+            if score < best_score:
+                best_index = index
+                best_score = score
+        return best_index
+
+    def menu_visual_cursor_pos(self, player_id, rects=None):
+        player = self.players[player_id]
+        state = self.menu_players[player_id]
+        rects = rects or self.menu_card_rects()
+        if state.selected_index is not None:
+            rect = rects[state.selected_index]
+            side = -1 if player_id == 101 else 1
+            bob = math.sin(time.time() * 10.0 + player_id) * 5.0
+            return rect.centerx + side * rect.width * 0.23, rect.top + rect.height * 0.18 + bob
+        return self.menu_cursor_screen(player)
+
+    def spawn_menu_sparks(self, x, y, color, count, speed):
+        now = time.time()
+        for _ in range(count):
+            angle = random.random() * math.tau
+            vel = random.uniform(speed * 0.35, speed)
+            size = random.uniform(3.0, 8.0)
+            self.menu_particles.append(MenuParticle(
+                x, y, math.cos(angle) * vel, math.sin(angle) * vel,
+                color, size, now, random.uniform(0.18, 0.42), "spark",
+                random.uniform(-1.0, 1.0),
+            ))
+
+    def spawn_menu_pixel_fire(self, x, y, character, count):
+        now = time.time()
+        colors = (character["dark"], character["theme"], character["secondary"], character["highlight"])
+        for _ in range(count):
+            color = random.choice(colors)
+            self.menu_particles.append(MenuParticle(
+                x + random.uniform(-46, 46),
+                y + random.uniform(-10, 30),
+                random.uniform(-42, 42),
+                random.uniform(-155, -55),
+                color,
+                random.uniform(5, 14),
+                now,
+                random.uniform(0.30, 0.78),
+                "fire",
+                random.uniform(-2.5, 2.5),
+            ))
+
+    def spawn_menu_slash(self, x, y, color, count=3, spread=0.55):
+        now = time.time()
+        for _ in range(count):
+            angle = random.uniform(-spread, spread) + random.choice((0.0, math.pi))
+            self.menu_slashes.append(MenuSlash(
+                x + random.uniform(-24, 24),
+                y + random.uniform(-20, 20),
+                angle,
+                random.uniform(120, 260),
+                color,
+                now,
+                random.uniform(0.16, 0.28),
+                random.uniform(13, 26),
+            ))
+
+    def spawn_menu_lock_fx(self, player_id, index):
+        rect = self.menu_card_rects()[index]
+        character = CHARACTER_SLOTS[index]
+        self.spawn_menu_sparks(rect.centerx, rect.centery, character["highlight"], 36, 390)
+        self.spawn_menu_pixel_fire(rect.centerx, rect.bottom - 12, character, 34)
+        self.spawn_menu_slash(rect.centerx, rect.centery, character["theme"], 5)
+
+    def spawn_menu_cancel_fx(self, player_id, index):
+        rect = self.menu_card_rects()[index]
+        color = self.menu_player_base_color(player_id)
+        self.spawn_menu_sparks(rect.centerx, rect.centery, color, 22, 280)
+        self.spawn_menu_slash(rect.centerx, rect.centery, PALETTE["bad"], 3, spread=0.95)
+
+    def spawn_menu_countdown_fx(self, label, step):
+        w, h = self.screen.get_size()
+        p1_char = self.selected_character_for_player(101) or CHARACTER_SLOTS[0]
+        p2_char = self.selected_character_for_player(102) or CHARACTER_SLOTS[1]
+        color = (p1_char["theme"], p2_char["theme"], PALETTE["soup"], PALETTE["white"])[min(step, 3)]
+        self.spawn_menu_sparks(w // 2, h // 2, color, 42 + step * 12, 430 + step * 90)
+        self.spawn_menu_slash(w // 2, h // 2, color, 5 + step)
+        if step >= 3:
+            self.play_menu_sound("menu_fire", 1.0)
+            self.spawn_menu_pixel_fire(w // 2, h // 2 + 90, p1_char, 55)
+            self.spawn_menu_pixel_fire(w // 2, h // 2 + 90, p2_char, 55)
+
+    def spawn_menu_transition_fx(self):
+        w, h = self.screen.get_size()
+        p1_char = self.selected_character_for_player(101) or CHARACTER_SLOTS[0]
+        p2_char = self.selected_character_for_player(102) or CHARACTER_SLOTS[1]
+        self.spawn_menu_sparks(w * 0.32, h * 0.52, p1_char["highlight"], 70, 520)
+        self.spawn_menu_sparks(w * 0.68, h * 0.52, p2_char["highlight"], 70, 520)
+        self.spawn_menu_slash(w // 2, h // 2, PALETTE["white"], 9, spread=0.22)
+
     def world_rect(self):
         margin = max(34, self.screen.get_width() // 28)
         hud = max(128, self.screen.get_height() // 6)
@@ -1015,6 +1694,11 @@ class SoupocalypseApp:
         if now < self.shake_until or self.shake_power > 0.5:
             power = self.shake_power
             offset = (random.randint(int(-power), int(power)), random.randint(int(-power), int(power)))
+        if self.match_state in MENU_STATES:
+            self.draw_character_select(offset)
+            self.draw_magcal_overlay()
+            pygame.display.flip()
+            return
         self.draw_background()
         self.draw_arena(offset)
         if self.debug_radar:
@@ -1029,6 +1713,7 @@ class SoupocalypseApp:
         self.draw_particles(offset, below=False)
         self.draw_hud()
         self.draw_messages()
+        self.draw_magcal_overlay()
         self.draw_impact_frames()
         pygame.display.flip()
 
@@ -1056,6 +1741,545 @@ class SoupocalypseApp:
             self.screen.blit(shadow_surf, rect.move(3, 4))
         self.screen.blit(rendered, rect)
         return rect
+
+    def draw_character_select(self, offset=(0, 0)):
+        target = self.screen
+        canvas = pygame.Surface(target.get_size(), pygame.SRCALPHA)
+        old_screen = self.screen
+        try:
+            self.screen = canvas
+            now = time.time()
+            rects = self.menu_card_rects()
+            self.draw_menu_background(now)
+            self.draw_menu_side_panel(101, now)
+            self.draw_menu_side_panel(102, now)
+            self.draw_menu_cards(rects, now)
+            self.draw_menu_particles(now, below=True)
+            for pid in (101, 102):
+                self.draw_menu_cursor(pid, now, rects)
+            self.draw_menu_particles(now, below=False)
+            self.draw_menu_notice(now)
+            self.draw_menu_countdown_overlay(now)
+            self.draw_menu_transition(now)
+        finally:
+            self.screen = old_screen
+        target.fill((0, 0, 0))
+        target.blit(canvas, offset)
+
+    def draw_menu_background(self, now):
+        w, h = self.screen.get_size()
+        self.screen.fill((14, 11, 12))
+        pygame.draw.polygon(
+            self.screen,
+            rgba(PALETTE["p1"], 34),
+            [(-80, 0), (w * 0.46, 0), (w * 0.35, h), (-120, h)],
+        )
+        pygame.draw.polygon(
+            self.screen,
+            rgba(PALETTE["p2"], 34),
+            [(w * 0.54, 0), (w + 80, 0), (w + 120, h), (w * 0.65, h)],
+        )
+        for i in range(38):
+            y = (i * 43 + now * 45) % (h + 120) - 60
+            x = (i * 97 + now * 95) % (w + 240) - 120
+            length = 74 + (i % 5) * 34
+            color = rgba(PALETTE["light_brown"] if i % 3 else PALETTE["soup_deep"], 26 + (i % 4) * 9)
+            self.draw_slanted_strip(x, y, length, 7 + (i % 3) * 3, -0.34, color)
+        self.draw_halftone_field((56, 120), 170, PALETTE["p1"], 0.36, now)
+        self.draw_halftone_field((w - 54, h - 110), 190, PALETTE["p2"], 0.34, now + 0.7)
+        for i in range(18):
+            x = (i * 151 + now * 28) % (w + 80) - 40
+            y = 78 + math.sin(now * 1.7 + i) * 16
+            self.draw_pixel_diamond(x, y, 5 + i % 4, rgba(PALETTE["soup"], 42))
+
+        title_y = max(54, h // 12)
+        self.draw_text_center(self.title_font, "SOUPOCALYPSE", PALETTE["soup"], (w // 2, title_y))
+        self.draw_text_center(self.font, "THE LAST BOWL", PALETTE["light_brown"], (w // 2, title_y + 54), shadow=False)
+        self.draw_skew_panel(
+            pygame.Rect(w // 2 - min(330, w // 4), title_y + 78, min(660, w // 2), 32),
+            rgba(PALETTE["panel_2"], 210),
+            rgba(PALETTE["soup_deep"], 190),
+            cut=16,
+        )
+        label = self.small_font.render("CHOOSE YOUR FIGHTER", True, PALETTE["beige"])
+        self.screen.blit(label, (w // 2 - label.get_width() // 2, title_y + 84))
+
+    def draw_menu_side_panel(self, player_id, now):
+        w, h = self.screen.get_size()
+        side = -1 if player_id == 101 else 1
+        panel_w = min(360, max(230, w // 4))
+        panel_h = min(h - 170, max(390, int(h * 0.66)))
+        x = 22 if side < 0 else w - panel_w - 22
+        y = max(126, int(h * 0.19))
+        state = self.menu_players[player_id]
+        character = self.selected_character_for_player(player_id)
+        base_color = self.menu_player_base_color(player_id)
+        theme = character["theme"] if character else base_color
+        dark = character["dark"] if character else PALETTE["panel_2"]
+        highlight = character["highlight"] if character else PALETTE["beige"]
+        reveal = 1.0
+        if character:
+            reveal = ease_out_back((now - state.selected_at) / MENU_PANEL_REVEAL)
+        slide = int((1.0 - reveal) * 90 * side)
+        rect = pygame.Rect(x + slide, y, panel_w, panel_h)
+
+        self.draw_skew_panel(rect.move(0, 10), (0, 0, 0, 150), None, cut=28)
+        self.draw_skew_panel(rect, rgba(dark, 232), rgba(theme, 240), cut=28, border_width=4)
+        self.draw_jagged_splash(
+            (rect.centerx + side * 24, rect.centery - 40),
+            min(panel_w, panel_h) * 0.42,
+            theme,
+            seed=player_id + (state.selected_index or 0) * 41,
+            alpha=72 if character else 34,
+            stretch=(0.88, 1.18),
+        )
+
+        badge = "P1" if player_id == 101 else "P2"
+        self.draw_menu_badge(badge, (rect.left + 40 if side < 0 else rect.right - 40, rect.top + 28), base_color, anchor="left" if side < 0 else "right")
+
+        if character:
+            art = self.character_portrait(state.selected_index)
+            art_rect = pygame.Rect(rect.left + 26, rect.top + 84, rect.width - 52, int(rect.height * 0.52))
+            bob = math.sin(now * 3.2 + player_id) * 6
+            self.blit_fit(art, art_rect.move(0, int(bob)), alpha=255)
+            self.spawn_panel_fire_trickle(rect, character, now)
+            name_rect = pygame.Rect(rect.left + 18, rect.bottom - 106, rect.width - 36, 58)
+            self.draw_skew_panel(name_rect, rgba(PALETTE["bg"], 232), rgba(highlight, 220), cut=14, border_width=2)
+            name = self.fit_text(self.font, character["name"].upper(), name_rect.width - 22, highlight)
+            self.screen.blit(name, (name_rect.centerx - name.get_width() // 2, name_rect.top + 9))
+            tag = self.small_font.render(character["tagline"].upper(), True, PALETTE["light_brown"])
+            self.screen.blit(tag, (name_rect.centerx - tag.get_width() // 2, name_rect.bottom - tag.get_height() - 7))
+            locked = self.big_font.render("LOCKED!", True, theme)
+            locked_rect = locked.get_rect(center=(rect.centerx, rect.bottom - 28))
+            shadow = self.big_font.render("LOCKED!", True, (0, 0, 0))
+            self.screen.blit(shadow, locked_rect.move(3, 4))
+            self.screen.blit(locked, locked_rect)
+        else:
+            ghost = pygame.Rect(rect.left + 34, rect.top + 100, rect.width - 68, rect.height - 190)
+            for i in range(5):
+                yy = ghost.top + i * ghost.height // 5 + int(math.sin(now * 2.0 + i) * 4)
+                self.draw_slanted_strip(ghost.left, yy, ghost.width, 12, 0.24 * side, rgba(theme, 40 + i * 8))
+            large = self.title_font.render(badge, True, rgba(theme, 230))
+            self.screen.blit(large, large.get_rect(center=(rect.centerx, rect.centery - 16)))
+            choosing = self.font.render("CHOOSING", True, PALETTE["beige"])
+            self.screen.blit(choosing, choosing.get_rect(center=(rect.centerx, rect.bottom - 70)))
+
+    def spawn_panel_fire_trickle(self, rect, character, now):
+        if len(self.menu_particles) > 1000:
+            return
+        if int(now * 12 + rect.left) % 5:
+            return
+        for _ in range(3):
+            self.menu_particles.append(MenuParticle(
+                random.uniform(rect.left + 42, rect.right - 42),
+                random.uniform(rect.bottom - 72, rect.bottom - 44),
+                random.uniform(-12, 12),
+                random.uniform(-72, -28),
+                random.choice((character["theme"], character["secondary"], character["highlight"])),
+                random.uniform(4, 9),
+                now,
+                random.uniform(0.32, 0.62),
+                "fire",
+            ))
+
+    def draw_menu_cards(self, rects, now):
+        for index, rect in enumerate(rects):
+            hoverers = [
+                state.player_id for state in self.menu_players.values()
+                if state.selected_index is None and state.hover_index == index
+            ]
+            lockers = [
+                state.player_id for state in self.menu_players.values()
+                if state.selected_index == index
+            ]
+            hover_pop = 0.0
+            for state in self.menu_players.values():
+                if state.hover_index == index and state.selected_index is None:
+                    hover_pop = max(hover_pop, 1.0 - clamp((now - state.hover_changed_at) / MENU_HOVER_ANIM, 0.0, 1.0))
+            lock_pop = 0.0
+            for state in self.menu_players.values():
+                if state.selected_index == index:
+                    lock_pop = max(lock_pop, 1.0 - clamp((now - state.selected_at) / MENU_SELECT_SLAM, 0.0, 1.0))
+            scale = 1.0 + 0.045 * bool(hoverers) + 0.065 * ease_out_cubic(lock_pop)
+            draw_rect = rect.inflate(int(rect.width * (scale - 1.0)), int(rect.height * (scale - 1.0)))
+            draw_rect.center = rect.center
+            self.draw_menu_card(index, draw_rect, hoverers, lockers, now, hover_pop, lock_pop)
+
+    def draw_menu_card(self, index, rect, hoverers, lockers, now, hover_pop, lock_pop):
+        character = CHARACTER_SLOTS[index]
+        theme = character["theme"]
+        dark = character["dark"]
+        highlight = character["highlight"]
+        jitter_x = int(math.sin(now * 22 + index) * 3 * lock_pop)
+        jitter_y = int(math.cos(now * 19 + index) * 3 * lock_pop)
+        rect = rect.move(jitter_x, jitter_y)
+
+        self.draw_skew_panel(rect.move(0, 8), (0, 0, 0, 170), None, cut=18)
+        self.draw_jagged_splash(
+            (rect.centerx, rect.centery - rect.height * 0.12),
+            rect.width * (0.56 + 0.08 * math.sin(now * 3 + index)),
+            theme,
+            seed=index * 91 + 3,
+            alpha=58 + 45 * bool(lockers),
+            stretch=(1.05, 0.70),
+        )
+        self.draw_skew_panel(rect, rgba(dark, 238), rgba(theme, 210), cut=18, border_width=3)
+        inner = rect.inflate(-14, -14)
+        self.draw_skew_panel(inner, rgba(PALETTE["panel"], 220), rgba(highlight, 80), cut=12, border_width=1)
+
+        portrait_rect = pygame.Rect(inner.left + 10, inner.top + 10, inner.width - 20, inner.height - 70)
+        pygame.draw.polygon(
+            self.screen,
+            rgba(theme, 42),
+            [
+                (portrait_rect.left + 12, portrait_rect.top),
+                (portrait_rect.right, portrait_rect.top + 8),
+                (portrait_rect.right - 10, portrait_rect.bottom),
+                (portrait_rect.left, portrait_rect.bottom - 12),
+            ],
+        )
+        self.blit_fit(self.character_portrait(index), portrait_rect)
+
+        name_rect = pygame.Rect(inner.left + 4, inner.bottom - 56, inner.width - 8, 34)
+        self.draw_skew_panel(name_rect, rgba((12, 10, 10), 224), rgba(theme, 180), cut=10, border_width=2)
+        name = self.fit_text(self.font, character["name"].upper(), name_rect.width - 14, PALETTE["beige"])
+        self.screen.blit(name, (name_rect.centerx - name.get_width() // 2, name_rect.centery - name.get_height() // 2))
+        tag = self.fit_text(self.small_font, character["tagline"].upper(), inner.width - 22, rgba(highlight, 230))
+        self.screen.blit(tag, (inner.centerx - tag.get_width() // 2, inner.bottom - 17))
+
+        if hoverers:
+            pulse = 0.55 + 0.45 * math.sin(now * 18 + index)
+            for n, pid in enumerate(hoverers):
+                color = self.menu_player_base_color(pid)
+                outline = rect.inflate(14 + n * 10 + int(hover_pop * 8), 14 + n * 10 + int(hover_pop * 8))
+                self.draw_skew_panel(outline, (0, 0, 0, 0), rgba(color, 160 + 80 * pulse), cut=22, border_width=4)
+                label = "P1?" if pid == 101 else "P2?"
+                anchor_x = outline.left + 36 + n * 48 if pid == 101 else outline.right - 36 - n * 48
+                self.draw_menu_badge(label, (anchor_x, outline.top + 18), color)
+            self.draw_menu_card_sparks(rect, hoverers, now)
+
+        if lockers:
+            for n, pid in enumerate(lockers):
+                label = "P1 LOCK" if pid == 101 else "P2 LOCK"
+                color = self.menu_player_base_color(pid)
+                badge_y = rect.top + 20 + n * 34
+                self.draw_menu_badge(label, (rect.centerx, badge_y), color)
+            self.draw_skew_panel(rect.inflate(24, 24), (0, 0, 0, 0), rgba(highlight, 230), cut=26, border_width=5)
+            if lock_pop > 0.0:
+                self.draw_starburst((rect.centerx, rect.centery), rect.width * (0.36 + lock_pop * 0.22), highlight, 120 * lock_pop, seed=index + 19)
+
+    def draw_menu_card_sparks(self, rect, hoverers, now):
+        if int(now * 18 + rect.left) % 4:
+            return
+        color = self.menu_player_base_color(hoverers[0])
+        x = random.choice((rect.left, rect.right)) + random.uniform(-10, 10)
+        y = random.uniform(rect.top + 24, rect.bottom - 24)
+        self.spawn_menu_sparks(x, y, color, 2, 110)
+
+    def draw_menu_cursor(self, player_id, now, rects):
+        state = self.menu_players[player_id]
+        base = self.menu_player_base_color(player_id)
+        character = self.selected_character_for_player(player_id)
+        color = character["theme"] if character else base
+        x, y = self.menu_visual_cursor_pos(player_id, rects)
+        bob = math.sin(now * 7.0 + player_id) * 3.5
+        x += math.sin(now * 4.3 + player_id) * 2.0
+        y += bob
+
+        for i, (hx, hy, ht) in enumerate(state.cursor_history):
+            age = now - ht
+            frac = clamp(1.0 - age / 0.26, 0.0, 1.0)
+            if frac <= 0:
+                continue
+            self.draw_slanted_strip(hx - 24 * frac, hy + 12 * frac, 46 * frac, 6 + 5 * frac, -0.32, rgba(base, 90 * frac))
+
+        deny = clamp((state.deny_until - now) / 0.24, 0.0, 1.0)
+        if deny > 0.0:
+            x += math.sin(now * 90) * 8 * deny
+        side = 1 if player_id == 101 else -1
+        points = self.cursor_points(x, y, side, 1.0 + 0.08 * bool(character))
+        shadow = [(px + 4, py + 5) for px, py in points]
+        pygame.draw.polygon(self.screen, (0, 0, 0, 180), shadow)
+        pygame.draw.polygon(self.screen, rgba(color, 245), points)
+        pygame.draw.polygon(self.screen, PALETTE["white"], points, 3)
+        inner = self.cursor_points(x + side * 2, y + 1, side, 0.62)
+        pygame.draw.polygon(self.screen, rgba(base, 235), inner)
+        label = "P1" if player_id == 101 else "P2"
+        text = self.small_font.render(label, True, (8, 8, 8))
+        self.screen.blit(text, text.get_rect(center=(x - side * 3, y + 5)))
+        if character:
+            stamp = self.small_font.render("LOCKED", True, PALETTE["white"])
+            stamp_rect = stamp.get_rect(center=(x, y + 43))
+            self.draw_skew_panel(stamp_rect.inflate(18, 8), rgba(character["dark"], 230), rgba(character["highlight"], 200), cut=6, border_width=1)
+            self.screen.blit(stamp, stamp_rect)
+
+    def cursor_points(self, x, y, side, scale):
+        pts = [
+            (0, -34), (34, -2), (14, 3), (25, 31),
+            (4, 23), (-16, 39), (-21, 10), (-44, 2),
+        ]
+        return [(x + px * side * scale, y + py * scale) for px, py in pts]
+
+    def draw_menu_particles(self, now, below):
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        for slash in self.menu_slashes:
+            age = now - slash.created_at
+            frac = clamp(1.0 - age / max(0.001, slash.life), 0.0, 1.0)
+            if below != (slash.width > 18):
+                continue
+            self.draw_slash_on(surf, slash, frac)
+        for particle in self.menu_particles:
+            age = now - particle.created_at
+            frac = clamp(1.0 - age / max(0.001, particle.life), 0.0, 1.0)
+            is_big = particle.kind == "fire"
+            if below != is_big:
+                continue
+            alpha = channel(235 * frac)
+            size = max(2, int(particle.size * (0.55 + frac)))
+            if particle.kind == "spark":
+                points = [
+                    (particle.x, particle.y - size),
+                    (particle.x + size, particle.y),
+                    (particle.x, particle.y + size),
+                    (particle.x - size, particle.y),
+                ]
+                pygame.draw.polygon(surf, rgba(particle.color, alpha), points)
+            else:
+                rect = pygame.Rect(0, 0, size, size)
+                rect.center = (particle.x, particle.y)
+                pygame.draw.rect(surf, rgba(particle.color, alpha), rect)
+                if frac > 0.5:
+                    inner = rect.inflate(-max(1, size // 3), -max(1, size // 3))
+                    pygame.draw.rect(surf, rgba(PALETTE["white"], 120 * frac), inner)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_menu_notice(self, now):
+        if now >= self.menu_notice_until or not self.menu_notice:
+            return
+        w, h = self.screen.get_size()
+        frac = clamp((self.menu_notice_until - now) / 0.55, 0.0, 1.0)
+        y = h * 0.16 + math.sin(now * 38) * 2
+        surf = self.font.render(self.menu_notice, True, PALETTE["white"])
+        rect = surf.get_rect(center=(w // 2, y))
+        self.draw_starburst(rect.center, max(58, rect.width * 0.42), PALETTE["soup_deep"], 95 * frac, seed=len(self.menu_notice))
+        self.draw_skew_panel(rect.inflate(34, 16), rgba(PALETTE["bg"], 220 * frac), rgba(PALETTE["soup"], 220 * frac), cut=12, border_width=2)
+        self.screen.blit(surf, rect)
+
+    def draw_menu_countdown_overlay(self, now):
+        if self.match_state not in ("countdown", "starting"):
+            return
+        labels = ("3", "2", "1", "GO!")
+        elapsed = max(0.0, now - self.menu_countdown_started_at)
+        step = min(len(labels) - 1, int(elapsed / MENU_COUNTDOWN_STEP))
+        local = (elapsed - step * MENU_COUNTDOWN_STEP) / MENU_COUNTDOWN_STEP
+        label = labels[step]
+        w, h = self.screen.get_size()
+        p1 = self.selected_character_for_player(101) or CHARACTER_SLOTS[0]
+        p2 = self.selected_character_for_player(102) or CHARACTER_SLOTS[1]
+        center = (w // 2 + int(math.sin(now * 42) * (2 + step)), h // 2)
+        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.polygon(overlay, rgba(p1["theme"], 90), [(-60, h * 0.25), (w * 0.48, h * 0.43), (w * 0.44, h * 0.62), (-90, h * 0.78)])
+        pygame.draw.polygon(overlay, rgba(p2["theme"], 90), [(w + 60, h * 0.22), (w * 0.52, h * 0.43), (w * 0.56, h * 0.64), (w + 90, h * 0.82)])
+        self.screen.blit(overlay, (0, 0), special_flags=pygame.BLEND_ADD)
+        self.draw_starburst(center, 130 + step * 18, PALETTE["white"] if step == 3 else PALETTE["soup"], 205, seed=step * 8 + 1)
+        self.draw_starburst(center, 190 + 25 * math.sin(now * 8), p1["theme"], 76, seed=37)
+        self.draw_starburst(center, 174 + 22 * math.cos(now * 7), p2["theme"], 76, seed=48)
+        scale = 1.35 + 0.44 * (1.0 - ease_out_cubic(local))
+        angle = math.sin((local + step) * math.tau) * (7 if step < 3 else 3)
+        text = self.title_font.render(label, True, (12, 10, 10) if step < 3 else PALETTE["white"])
+        text = pygame.transform.rotozoom(text, angle, scale)
+        text_rect = text.get_rect(center=center)
+        shadow = text.copy()
+        shadow.fill((0, 0, 0, 190), special_flags=pygame.BLEND_RGBA_MULT)
+        self.screen.blit(shadow, text_rect.move(7, 8))
+        self.screen.blit(text, text_rect)
+        for i in range(12 + step * 4):
+            angle_i = i * math.tau / (12 + step * 4) + now * 0.6
+            length = 96 + i % 4 * 32
+            x1 = center[0] + math.cos(angle_i) * 86
+            y1 = center[1] + math.sin(angle_i) * 64
+            x2 = center[0] + math.cos(angle_i) * (86 + length)
+            y2 = center[1] + math.sin(angle_i) * (64 + length * 0.54)
+            pygame.draw.line(self.screen, rgba(PALETTE["white"], 120), (x1, y1), (x2, y2), 3)
+
+    def draw_menu_transition(self, now):
+        if self.match_state != "starting" or self.menu_transition_started_at <= 0:
+            return
+        w, h = self.screen.get_size()
+        t = ease_out_cubic((now - self.menu_transition_started_at) / MENU_TRANSITION_DELAY)
+        p1 = self.selected_character_for_player(101) or CHARACTER_SLOTS[0]
+        p2 = self.selected_character_for_player(102) or CHARACTER_SLOTS[1]
+        left_x = int(lerp(-w * 0.25, w * 0.62, t))
+        right_x = int(lerp(w * 1.25, w * 0.38, t))
+        pygame.draw.polygon(self.screen, rgba(p1["theme"], 235), [(-80, -40), (left_x, -40), (left_x - 160, h + 40), (-100, h + 40)])
+        pygame.draw.polygon(self.screen, rgba(p2["theme"], 235), [(w + 80, -40), (right_x, -40), (right_x + 160, h + 40), (w + 100, h + 40)])
+        for i in range(18):
+            y = i * h / 17
+            self.draw_slanted_strip(lerp(-180, w + 60, t) - i * 24, y, 220, 9, -0.45, rgba(PALETTE["white"], 120))
+        label = self.big_font.render("FIGHT!", True, PALETTE["white"])
+        label = pygame.transform.rotozoom(label, -5 + 10 * t, 1.0 + t * 0.35)
+        self.screen.blit(label, label.get_rect(center=(w // 2, h // 2)))
+
+    def draw_skew_panel(self, rect, fill, border=None, cut=18, border_width=3):
+        cut = min(cut, rect.width // 3, rect.height // 2)
+        points = [
+            (rect.left + cut, rect.top),
+            (rect.right, rect.top),
+            (rect.right - cut, rect.bottom),
+            (rect.left, rect.bottom),
+        ]
+        if fill and (len(fill) < 4 or fill[3] > 0):
+            pygame.draw.polygon(self.screen, fill, points)
+        if border and border_width > 0 and (len(border) < 4 or border[3] > 0):
+            pygame.draw.polygon(self.screen, border, points, border_width)
+
+    def draw_menu_badge(self, text, center, color, anchor="center"):
+        surf = self.small_font.render(text, True, (12, 10, 10))
+        rect = surf.get_rect()
+        if anchor == "left":
+            rect.midleft = center
+        elif anchor == "right":
+            rect.midright = center
+        else:
+            rect.center = center
+        bg = rect.inflate(20, 10)
+        self.draw_skew_panel(bg.move(3, 4), (0, 0, 0, 150), None, cut=6)
+        self.draw_skew_panel(bg, rgba(color, 245), rgba(PALETTE["white"], 210), cut=6, border_width=2)
+        self.screen.blit(surf, rect)
+
+    def draw_jagged_splash(self, center, radius, color, seed, alpha=90, stretch=(1.0, 1.0)):
+        rng = random.Random(seed)
+        points = []
+        count = 16
+        for i in range(count):
+            angle = i * math.tau / count
+            r = radius * rng.uniform(0.58, 1.18)
+            x = center[0] + math.cos(angle) * r * stretch[0]
+            y = center[1] + math.sin(angle) * r * stretch[1]
+            points.append((x, y))
+        pygame.draw.polygon(self.screen, rgba(color, alpha), points)
+        for _ in range(5):
+            angle = rng.random() * math.tau
+            dist = radius * rng.uniform(0.45, 1.25)
+            x = center[0] + math.cos(angle) * dist * stretch[0]
+            y = center[1] + math.sin(angle) * dist * stretch[1]
+            self.draw_pixel_diamond(x, y, rng.uniform(5, 13), rgba(color, alpha * 0.78))
+
+    def draw_starburst(self, center, radius, color, alpha, seed=1):
+        rng = random.Random(seed)
+        points = []
+        count = 18
+        for i in range(count):
+            angle = i * math.tau / count
+            r = radius * (1.0 if i % 2 == 0 else rng.uniform(0.34, 0.62))
+            points.append((center[0] + math.cos(angle) * r, center[1] + math.sin(angle) * r))
+        pygame.draw.polygon(self.screen, rgba(color, alpha), points)
+
+    def draw_halftone_field(self, center, radius, color, strength, now):
+        step = 18
+        cx, cy = center
+        for ix in range(-7, 8):
+            for iy in range(-7, 8):
+                x = cx + ix * step
+                y = cy + iy * step
+                dist = math.hypot(x - cx, y - cy)
+                if dist > radius:
+                    continue
+                wave = 0.5 + 0.5 * math.sin(now * 2.4 + ix * 0.7 + iy * 0.4)
+                size = int((1.0 - dist / radius) * 8 * strength + wave * 3)
+                if size > 0:
+                    pygame.draw.rect(self.screen, rgba(color, 48), (x, y, size, size))
+
+    def draw_slanted_strip(self, x, y, length, height, slant, color):
+        dx = height * slant
+        points = [(x + dx, y), (x + length + dx, y), (x + length - dx, y + height), (x - dx, y + height)]
+        pygame.draw.polygon(self.screen, color, points)
+
+    def draw_slash_on(self, surf, slash, frac):
+        length = slash.length * (0.35 + 0.65 * frac)
+        width = slash.width * frac
+        ux = math.cos(slash.angle)
+        uy = math.sin(slash.angle)
+        px = -uy
+        py = ux
+        cx = slash.x + ux * slash.length * (1.0 - frac) * 0.22
+        cy = slash.y + uy * slash.length * (1.0 - frac) * 0.22
+        points = [
+            (cx - ux * length * 0.5 + px * width * 0.35, cy - uy * length * 0.5 + py * width * 0.35),
+            (cx + ux * length * 0.5 + px * width, cy + uy * length * 0.5 + py * width),
+            (cx + ux * length * 0.5 - px * width * 0.35, cy + uy * length * 0.5 - py * width * 0.35),
+            (cx - ux * length * 0.5 - px * width, cy - uy * length * 0.5 - py * width),
+        ]
+        pygame.draw.polygon(surf, rgba(slash.color, 190 * frac), points)
+        inner = [(lerp(px1, cx, 0.08), lerp(py1, cy, 0.08)) for px1, py1 in points]
+        pygame.draw.polygon(surf, rgba(PALETTE["white"], 150 * frac), inner)
+
+    def draw_pixel_diamond(self, x, y, size, color):
+        points = [(x, y - size), (x + size, y), (x, y + size), (x - size, y)]
+        pygame.draw.polygon(self.screen, color, points)
+
+    def character_portrait(self, index):
+        if index in self.character_cache:
+            return self.character_cache[index]
+        character = CHARACTER_SLOTS[index]
+        path = character["portrait"]
+        if path and path.exists():
+            try:
+                surf = pygame.image.load(str(path)).convert_alpha()
+                bounds = surf.get_bounding_rect(8)
+                if bounds.width > 0 and bounds.height > 0:
+                    surf = surf.subsurface(bounds).copy()
+                self.character_cache[index] = surf
+                return surf
+            except pygame.error as exc:
+                self.log(f"character art failed: {path.name} {exc}")
+        surf = self.procedural_character_portrait(index)
+        self.character_cache[index] = surf
+        return surf
+
+    def procedural_character_portrait(self, index):
+        character = CHARACTER_SLOTS[index]
+        surf = pygame.Surface((220, 250), pygame.SRCALPHA)
+        rng = random.Random(index * 301 + 9)
+        theme = character["theme"]
+        dark = character["dark"]
+        highlight = character["highlight"]
+        for i in range(12):
+            x = rng.randint(18, 200)
+            y = rng.randint(24, 228)
+            size = rng.randint(8, 24)
+            pygame.draw.rect(surf, rgba(theme, 28 + i * 4), (x, y, size, size))
+        body = [(64, 190), (44, 104), (84, 48), (142, 52), (178, 112), (154, 196), (104, 218)]
+        pygame.draw.polygon(surf, dark, body)
+        pygame.draw.polygon(surf, theme, [(72, 180), (58, 108), (90, 66), (134, 68), (162, 118), (145, 184), (104, 202)])
+        for x in (88, 134):
+            pygame.draw.polygon(surf, PALETTE["white"], [(x - 14, 106), (x, 92), (x + 15, 106), (x, 121)])
+            pygame.draw.circle(surf, (8, 8, 8), (x + 2, 107), 5)
+        pygame.draw.arc(surf, (12, 10, 10), (84, 128, 60, 32), 0.1, math.pi - 0.2, 5)
+        for i in range(5):
+            x = 72 + i * 20
+            pygame.draw.polygon(surf, highlight, [(x, 62), (x + 8, 30 + rng.randint(-8, 8)), (x + 18, 63)])
+        return surf
+
+    def blit_fit(self, surf, rect, alpha=255):
+        if surf.get_width() <= 0 or surf.get_height() <= 0:
+            return
+        scale = min(rect.width / surf.get_width(), rect.height / surf.get_height())
+        size = (max(1, int(surf.get_width() * scale)), max(1, int(surf.get_height() * scale)))
+        scaled = pygame.transform.smoothscale(surf, size)
+        if alpha < 255:
+            scaled = scaled.copy()
+            scaled.set_alpha(alpha)
+        dest = scaled.get_rect(center=rect.center)
+        self.screen.blit(scaled, dest)
+
+    def fit_text(self, font, text, max_width, color):
+        rendered = font.render(text, True, color)
+        if rendered.get_width() <= max_width:
+            return rendered
+        scale = max_width / max(1, rendered.get_width())
+        size = (max(1, int(rendered.get_width() * scale)), max(1, int(rendered.get_height() * scale)))
+        return pygame.transform.smoothscale(rendered, size)
 
     def draw_arena(self, offset):
         rect = self.world_rect().move(offset)
@@ -1162,7 +2386,7 @@ class SoupocalypseApp:
         key = player.player_id
         if key in self.sprite_cache:
             return self.sprite_cache[key]
-        path = PLAYER_SPRITES.get(player.player_id)
+        path = self.player_sprite_paths.get(player.player_id, PLAYER_SPRITES.get(player.player_id))
         if path and path.exists():
             try:
                 surf = pygame.image.load(str(path)).convert_alpha()
@@ -1211,10 +2435,10 @@ class SoupocalypseApp:
 
     def draw_player(self, player, offset):
         sx, sy = self.world_to_screen(player.x, player.y, offset)
-        shadow_w = self.meters_to_px(PLAYER_RADIUS_M * 2.2)
+        shadow_w = max(4, int(self.meters_to_px(PLAYER_RADIUS_M * 2.2) * PLAYER_SHADOW_SCALE))
         shadow = pygame.Surface((shadow_w * 2, shadow_w), pygame.SRCALPHA)
-        pygame.draw.ellipse(shadow, (0, 0, 0, 98), shadow.get_rect())
-        self.screen.blit(shadow, (sx - shadow.get_width() // 2, sy - shadow.get_height() // 2 + 10))
+        pygame.draw.ellipse(shadow, (0, 0, 0, 82), shadow.get_rect())
+        self.screen.blit(shadow, (sx - shadow.get_width() // 2, sy - shadow.get_height() // 2 + 5))
 
         dx, dy = heading_vec(player.heading)
         aim_end = self.world_to_screen(player.x + dx * 0.55, player.y + dy * 0.55, offset)
@@ -1237,7 +2461,7 @@ class SoupocalypseApp:
         pygame.draw.rect(self.screen, rgba(PALETTE["panel"], 238), top)
         pygame.draw.line(self.screen, PALETTE["dark_brown"], (0, top.bottom), (w, top.bottom), 4)
         self.draw_text_center(self.title_font, "SOUPOCALYPSE", PALETTE["soup"], (w // 2, top.top + top.height // 2 - 8))
-        self.draw_text_center(self.small_font, "THE LAST BOWL", PALETTE["light_brown"], (w // 2, top.bottom - 18), shadow=False)
+        # self.draw_text_center(self.small_font, "THE LAST BOWL", PALETTE["light_brown"], (w // 2, top.bottom - 18), shadow=False)
 
         panel_w = min(390, max(320, w // 4))
         self.draw_player_hud(self.players[101], 24, 22, panel_w)
@@ -1246,6 +2470,15 @@ class SoupocalypseApp:
             "FAKE: P1 WASD QE F/R     P2 ARROWS , .  / RSHIFT     ENTER RESET     D RADAR DEBUG"
             if self.args.fake else self.hardware_status_text()
         )
+        if time.time() < self.calibration_select_until:
+            footer_text = "CALIBRATE: PRESS 1 FOR P101 OR 2 FOR P102     DO FIGURE-EIGHTS UNTIL SAVED"
+        else:
+            status = self.current_magcal_status()
+            if status and status.active(time.time()):
+                footer_text = (
+                    f"P{status.player_id} COMPASS CAL {status.progress}%     "
+                    f"{self.format_seconds(status.remaining_ms)} LEFT     QUALITY {status.quality}%"
+                )
         text = self.small_font.render(footer_text, True, PALETTE["muted"])
         footer = pygame.Rect(0, self.screen.get_height() - 38, w, 38)
         pygame.draw.rect(self.screen, rgba(PALETTE["panel"], 225), footer)
@@ -1253,6 +2486,82 @@ class SoupocalypseApp:
         for i, (_, log) in enumerate(self.logs[-3:]):
             line = self.small_font.render(log, True, PALETTE["muted"])
             self.screen.blit(line, (24, self.screen.get_height() - 106 + i * 20))
+
+    def current_magcal_status(self):
+        now = time.time()
+        visible = [status for status in self.mag_cal_status.values() if status.visible(now)]
+        if not visible:
+            return None
+        active = [status for status in visible if status.active(now)]
+        candidates = active or visible
+        return max(candidates, key=lambda status: status.seen_at)
+
+    def format_seconds(self, ms):
+        seconds = max(0, int(round(ms / 1000.0)))
+        return f"{seconds}s"
+
+    def magcal_instruction(self, status):
+        if status.state == "REQUESTED":
+            return "Waiting for controller. Keep it away from metal."
+        if status.state == "OK":
+            return "Saved. Recenter heading in play position."
+        if status.state == "ERR":
+            return "Failed. Use bigger figure-eights away from metal."
+        if status.state == "RESET":
+            return "Reset. Run calibration again before trusting aim."
+        if status.radius_x < 80 or status.radius_y < 80:
+            return "Wide figure-eights. Rotate through lots of yaw."
+        if status.radius_z < 45 and status.remaining_ms > 2500:
+            return "X/Y good. Tilt and roll for Z coverage."
+        return "Almost there. Keep moving until this says SAVED."
+
+    def draw_progress_bar(self, rect, value, max_value, color, label):
+        pygame.draw.rect(self.screen, PALETTE["dark_brown"], rect, border_radius=5)
+        frac = 0.0 if max_value <= 0 else clamp(value / max_value, 0.0, 1.0)
+        fill = rect.copy()
+        fill.width = max(3, int(rect.width * frac))
+        pygame.draw.rect(self.screen, color, fill, border_radius=5)
+        text = self.small_font.render(label, True, PALETTE["beige"])
+        self.screen.blit(text, (rect.left, rect.top - text.get_height() - 3))
+
+    def draw_magcal_overlay(self):
+        status = self.current_magcal_status()
+        if not status:
+            return
+        w, h = self.screen.get_size()
+        panel = pygame.Rect(0, 0, min(720, w - 80), 194)
+        panel.center = (w // 2, max(260, h // 3))
+        pygame.draw.rect(self.screen, (0, 0, 0), panel.move(0, 7), border_radius=16)
+        pygame.draw.rect(self.screen, PALETTE["panel_2"], panel, border_radius=16)
+        pygame.draw.rect(self.screen, PALETTE["light_brown"], panel, 3, border_radius=16)
+
+        title_color = PALETTE["soup"] if status.state != "ERR" else PALETTE["bad"]
+        state_label = "SAVED" if status.state == "OK" else "FAILED" if status.state == "ERR" else status.state
+        title = f"P{status.player_id} COMPASS CALIBRATION - {state_label}"
+        self.draw_text_center(self.font, title, title_color, (panel.centerx, panel.top + 28), shadow=False)
+
+        progress_rect = pygame.Rect(panel.left + 34, panel.top + 58, panel.width - 68, 22)
+        self.draw_progress_bar(progress_rect, status.progress, 100, PALETTE["soup_deep"], f"progress {status.progress}%")
+
+        detail = (
+            f"quality {status.quality}%     samples {status.samples}     "
+            f"elapsed {self.format_seconds(status.elapsed_ms)}     left {self.format_seconds(status.remaining_ms)}"
+        )
+        detail_surf = self.small_font.render(detail, True, PALETTE["muted"])
+        self.screen.blit(detail_surf, (panel.centerx - detail_surf.get_width() // 2, panel.top + 90))
+
+        bar_w = (panel.width - 92) // 3
+        for i, (label, value, needed) in enumerate((
+            ("X", status.radius_x, 80),
+            ("Y", status.radius_y, 80),
+            ("Z", status.radius_z, 45),
+        )):
+            rect = pygame.Rect(panel.left + 34 + i * (bar_w + 12), panel.top + 130, bar_w, 16)
+            self.draw_progress_bar(rect, value, needed, PALETTE["p1"] if value >= needed else PALETTE["coral"], f"{label} {value}/{needed}")
+
+        instruction = self.magcal_instruction(status)
+        instruction_surf = self.small_font.render(instruction, True, PALETTE["beige"])
+        self.screen.blit(instruction_surf, (panel.centerx - instruction_surf.get_width() // 2, panel.bottom - 24))
 
     def hardware_status_text(self):
         now = time.time()

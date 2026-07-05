@@ -48,6 +48,19 @@ const bool RELAY_ACTIVE_LOW = false;
 
 const uint16_t PACKET_MAGIC = 0x51A7;
 const uint8_t PACKET_TYPE_PLAYER = 20;
+const uint8_t PACKET_TYPE_COMMAND = 31;
+const uint8_t PACKET_TYPE_MAGCAL = 32;
+const uint8_t PLAYER_CMD_NONE = 0;
+const uint8_t PLAYER_CMD_MAGCAL = 1;
+const uint8_t PLAYER_CMD_MAGCALRESET = 2;
+const uint8_t PLAYER_CMD_CAL = 3;
+const uint8_t MAGCAL_STATE_STARTED = 1;
+const uint8_t MAGCAL_STATE_RUNNING = 2;
+const uint8_t MAGCAL_STATE_OK = 3;
+const uint8_t MAGCAL_STATE_ERR = 4;
+const uint8_t MAGCAL_STATE_RESET = 5;
+
+uint8_t broadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 #if HAS_NEOPIXEL
 Adafruit_NeoPixel pixels(24, LED_STRIP_PIN, NEO_GRB + NEO_KHZ800);
@@ -63,6 +76,35 @@ struct __attribute__((packed)) PlayerPacket {
   uint8_t flags;
   uint32_t uptimeMs;
 };
+
+struct __attribute__((packed)) PlayerCommandPacket {
+  uint16_t magic;
+  uint8_t packetType;
+  uint8_t targetId;
+  uint8_t command;
+  uint16_t sequence;
+  uint32_t valueMs;
+};
+
+struct __attribute__((packed)) PlayerMagCalPacket {
+  uint16_t magic;
+  uint8_t packetType;
+  uint8_t playerId;
+  uint16_t sequence;
+  uint8_t state;
+  uint8_t progress;
+  uint8_t quality;
+  uint8_t flags;
+  uint16_t samples;
+  uint16_t elapsedMs10;
+  uint16_t remainingMs10;
+  uint16_t radiusX;
+  uint16_t radiusY;
+  uint16_t radiusZ;
+  uint16_t avgRadius;
+};
+
+uint16_t commandSequence = 0;
 
 uint8_t radarBuffer[96];
 uint8_t radarLen = 0;
@@ -160,14 +202,53 @@ int splitCsv(String line, String parts[], int maxParts) {
   return count;
 }
 
+uint8_t parsePlayerCommand(String text) {
+  text.trim();
+  text.toUpperCase();
+  if (text == "MAGCAL" || text == "CALMAG") return PLAYER_CMD_MAGCAL;
+  if (text == "MAGCALRESET" || text == "RESETMAG") return PLAYER_CMD_MAGCALRESET;
+  if (text == "CAL" || text == "RECENTER") return PLAYER_CMD_CAL;
+  return PLAYER_CMD_NONE;
+}
+
+void sendPlayerCommand(uint8_t targetId, uint8_t command, uint32_t valueMs) {
+  if (command == PLAYER_CMD_NONE) {
+    Serial.println("PLAYERCMD_ERR,bad_command");
+    return;
+  }
+  PlayerCommandPacket packet = {};
+  packet.magic = PACKET_MAGIC;
+  packet.packetType = PACKET_TYPE_COMMAND;
+  packet.targetId = targetId;
+  packet.command = command;
+  packet.sequence = commandSequence++;
+  packet.valueMs = valueMs;
+  esp_err_t result = esp_now_send(broadcastMac, (uint8_t *)&packet, sizeof(packet));
+  Serial.print("PLAYERCMD_SENT,target=");
+  Serial.print(targetId);
+  Serial.print(",command=");
+  Serial.print(command);
+  Serial.print(",seq=");
+  Serial.print(packet.sequence);
+  Serial.print(",valueMs=");
+  Serial.print(valueMs);
+  Serial.print(",result=");
+  Serial.println((int)result);
+}
+
 void handleSerialLine(String line) {
   line.trim();
   if (!line.length()) return;
-  String parts[8];
-  int count = splitCsv(line, parts, 8);
+  String parts[10];
+  int count = splitCsv(line, parts, 10);
   parts[0].toUpperCase();
   if (parts[0] == "FX" && count >= 2) {
     handleFx(parts[1]);
+  } else if (parts[0] == "PLAYERCMD" && count >= 3) {
+    uint8_t targetId = (uint8_t)parts[1].toInt();
+    uint8_t command = parsePlayerCommand(parts[2]);
+    uint32_t valueMs = count >= 4 ? (uint32_t)parts[3].toInt() : 0;
+    sendPlayerCommand(targetId, command, valueMs);
   } else if (parts[0] == "RELAY" && count >= 4) {
     String name = parts[1];
     name.toLowerCase();
@@ -259,28 +340,73 @@ void printPlayerPacket(const PlayerPacket &packet, int rssi) {
   Serial.println(packet.uptimeMs);
 }
 
+const char *magCalStateName(uint8_t state) {
+  if (state == MAGCAL_STATE_STARTED) return "START";
+  if (state == MAGCAL_STATE_RUNNING) return "RUNNING";
+  if (state == MAGCAL_STATE_OK) return "OK";
+  if (state == MAGCAL_STATE_ERR) return "ERR";
+  if (state == MAGCAL_STATE_RESET) return "RESET";
+  return "UNKNOWN";
+}
+
+void printMagCalPacket(const PlayerMagCalPacket &packet, int rssi) {
+  Serial.print("MAGCAL,");
+  Serial.print(packet.playerId);
+  Serial.print(",");
+  Serial.print(magCalStateName(packet.state));
+  Serial.print(",");
+  Serial.print((int)packet.progress);
+  Serial.print(",");
+  Serial.print((int)packet.quality);
+  Serial.print(",");
+  Serial.print(packet.samples);
+  Serial.print(",");
+  Serial.print((uint32_t)packet.elapsedMs10 * 10UL);
+  Serial.print(",");
+  Serial.print((uint32_t)packet.remainingMs10 * 10UL);
+  Serial.print(",");
+  Serial.print(packet.radiusX);
+  Serial.print(",");
+  Serial.print(packet.radiusY);
+  Serial.print(",");
+  Serial.print(packet.radiusZ);
+  Serial.print(",");
+  Serial.print(packet.avgRadius);
+  Serial.print(",");
+  Serial.print((int)packet.flags);
+  Serial.print(",");
+  Serial.println(rssi);
+}
+
+void handleEspNowData(const uint8_t *data, int len, int rssi) {
+  if (len < 3) return;
+  uint16_t magic = 0;
+  memcpy(&magic, data, sizeof(magic));
+  if (magic != PACKET_MAGIC) return;
+  uint8_t packetType = data[2];
+  if (packetType == PACKET_TYPE_PLAYER && len == sizeof(PlayerPacket)) {
+    PlayerPacket packet;
+    memcpy(&packet, data, sizeof(packet));
+    printPlayerPacket(packet, rssi);
+  } else if (packetType == PACKET_TYPE_MAGCAL && len == sizeof(PlayerMagCalPacket)) {
+    PlayerMagCalPacket packet;
+    memcpy(&packet, data, sizeof(packet));
+    printMagCalPacket(packet, rssi);
+  }
+}
+
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
 void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   int rssi = -127;
   if (info != nullptr && info->rx_ctrl != nullptr) {
     rssi = info->rx_ctrl->rssi;
   }
-  if (len != sizeof(PlayerPacket)) return;
-  PlayerPacket packet;
-  memcpy(&packet, data, sizeof(packet));
-  if (packet.magic == PACKET_MAGIC && packet.packetType == PACKET_TYPE_PLAYER) {
-    printPlayerPacket(packet, rssi);
-  }
+  handleEspNowData(data, len, rssi);
 }
 #else
 void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
   (void)mac;
-  if (len != sizeof(PlayerPacket)) return;
-  PlayerPacket packet;
-  memcpy(&packet, data, sizeof(packet));
-  if (packet.magic == PACKET_MAGIC && packet.packetType == PACKET_TYPE_PLAYER) {
-    printPlayerPacket(packet, -127);
-  }
+  handleEspNowData(data, len, -127);
 }
 #endif
 
@@ -294,6 +420,11 @@ void setupEspNow() {
     ESP.restart();
   }
   esp_now_register_recv_cb(onDataRecv);
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, broadcastMac, 6);
+  peerInfo.channel = WIFI_CHANNEL;
+  peerInfo.encrypt = false;
+  esp_now_add_peer(&peerInfo);
 }
 
 void setupFx() {
