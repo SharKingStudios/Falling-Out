@@ -5,6 +5,7 @@ import random
 import struct
 import threading
 import time
+import wave
 from dataclasses import dataclass, field
 from itertools import permutations
 from pathlib import Path
@@ -54,6 +55,7 @@ TARGET_FPS = 60
 BASE_DIR = Path(__file__).resolve().parent
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 SPRITE_DIR = BASE_DIR / "assets" / "sprites"
+GENERATED_AUDIO_DIR = BASE_DIR / "assets" / "generated_audio" / "fight"
 HELLS_BELLS_FONT = FONT_DIR / "Hells-Bells.otf"
 OUTFIT_FONT = FONT_DIR / "Outfit-latin.woff2"
 PLAYER_SPRITES = {
@@ -95,6 +97,64 @@ MENU_SFX_VOLUME = {
     "menu_fire": 0.66,
     "menu_transition": 0.92,
 }
+ENABLE_FIGHT_JUICE = True
+ENABLE_SCREEN_SHAKE = True
+ENABLE_HIT_STOP = True
+ENABLE_GENERATED_PARTICLES = True
+ENABLE_CHARACTER_ATTACK_DESCRIPTORS = True
+ENABLE_PROCEDURAL_AUDIO_GENERATION = True
+ENABLE_VICTORY_SCREEN = True
+FIGHT_MAX_PARTICLES = 1300
+FIGHT_SFX_MASTER_VOLUME = 0.96
+FIGHT_VOICE_MASTER_VOLUME = 0.82
+ATTACK_LINE_COOLDOWN = 1.05
+ROUND_WIN_PRESENTATION = 1.55
+NEXT_ROUND_COUNTDOWN_STEP = 0.62
+NEXT_ROUND_COUNTDOWN_TOTAL = NEXT_ROUND_COUNTDOWN_STEP * 4
+MATCH_WIN_SCREEN_MIN_DURATION = 5.2
+FIGHT_FLASH_DURATION = 0.16
+FIGHT_SHAKE_ATTACK = 3.2
+FIGHT_SHAKE_HIT = 9.0
+FIGHT_SHAKE_KO = 14.0
+FIGHT_SHAKE_MATCH_WIN = 18.0
+ATTACK_EFFECT_INTENSITY = 1.18
+ATTACK_STARTUP_VISUAL = 0.075
+ATTACK_MUZZLE_BURST_SIZE = 1.18
+ATTACK_HIT_BURST_SIZE = 1.20
+ATTACK_AFTERIMAGE_DURATION = 0.38
+ATTACK_MISS_BURST_SIZE = 0.58
+ATTACK_MOTION_TRAIL_LENGTH = 0.24
+ATTACK_MAX_PARTICLES = 150
+SHIELD_BLOCK_SHAKE = 5.2
+SHIELD_BLOCK_SPARK_COUNT = 50
+IMPACT_FRAME_FLASH_FRAMES = 2
+IMPACT_FRAME_INVERT_FRAME = 6
+IMPACT_FRAME_REENTRY_FRAME = 11
+IMPACT_FRAME_SHAKE = 3.5
+GENERATED_ICON_SIZE = 64
+EMBLEM_SPIN_SPEED = 420.0
+LIGHTNING_REDRAW_RATE = 48.0
+FIRE_FLICKER_RATE = 24.0
+STEAM_FADE_DURATION = 0.72
+SLASH_SHARD_COUNT = 18
+HIT_TYPOGRAPHY = True
+FIGHT_SFX_VOLUME = {
+    "fight_razor": 0.92,
+    "fight_torrent": 0.94,
+    "fight_emblem": 0.88,
+    "fight_chain": 0.94,
+    "fight_fire": 0.94,
+    "fight_spiral": 0.90,
+    "fight_hit": 0.96,
+    "fight_shield": 0.82,
+    "fight_shield_hit": 0.94,
+    "fight_round_win": 0.96,
+    "fight_match_win": 1.0,
+    "fight_count_3": 0.84,
+    "fight_count_2": 0.86,
+    "fight_count_1": 0.90,
+    "fight_count_go": 1.0,
+}
 
 MAGCAL_ACTIVE_STATES = {"REQUESTED", "START", "RUNNING"}
 MAGCAL_DONE_STATES = {"OK", "ERR", "RESET"}
@@ -133,7 +193,9 @@ CHARACTER_SLOTS = (
         "secondary": (255, 235, 173),
         "dark": (21, 77, 55),
         "highlight": (168, 255, 203),
+        "accent": (255, 246, 122),
         "tagline": "simmer guard",
+        "attack_type": "razor",
     },
     {
         "id": "noodle_wyrm",
@@ -143,7 +205,9 @@ CHARACTER_SLOTS = (
         "secondary": (255, 235, 173),
         "dark": (116, 39, 43),
         "highlight": (255, 204, 166),
+        "accent": (255, 79, 86),
         "tagline": "spice striker",
+        "attack_type": "torrent",
     },
     {
         "id": "bloo",
@@ -153,7 +217,9 @@ CHARACTER_SLOTS = (
         "secondary": (113, 255, 222),
         "dark": (18, 68, 107),
         "highlight": (223, 251, 255),
+        "accent": (123, 145, 255),
         "tagline": "cold snap",
+        "attack_type": "emblem",
     },
     {
         "id": "party_cat",
@@ -163,7 +229,9 @@ CHARACTER_SLOTS = (
         "secondary": (255, 105, 180),
         "dark": (126, 73, 20),
         "highlight": (255, 249, 178),
+        "accent": (128, 255, 93),
         "tagline": "festival fury",
+        "attack_type": "chain",
     },
     {
         "id": "wasteland_wing",
@@ -173,7 +241,9 @@ CHARACTER_SLOTS = (
         "secondary": (86, 226, 188),
         "dark": (54, 43, 112),
         "highlight": (232, 225, 255),
+        "accent": (255, 96, 188),
         "tagline": "scrap dive",
+        "attack_type": "fire",
     },
     {
         "id": "the_goat",
@@ -183,9 +253,229 @@ CHARACTER_SLOTS = (
         "secondary": (82, 218, 128),
         "dark": (99, 48, 16),
         "highlight": (255, 222, 153),
+        "accent": (255, 86, 56),
         "tagline": "bowl bandit",
+        "attack_type": "spiral",
     },
 )
+
+ATTACK_PROFILES = {
+    "razor": {
+        "id": "razor",
+        "display_name": "Razor Soup Beam",
+        "sound": "fight_razor",
+        "beam_shape": "jagged_ribbon",
+        "muzzle": "slash_burst",
+        "trail": "angular_shards",
+        "impact": "slash_star",
+        "screen": "palette_flash",
+        "camera_shake": 4.0,
+        "hit_shake": 10.0,
+        "hit_stop": HIT_IMPACT_DURATION,
+        "intensity": 1.0,
+        "debug_name": "slash-ribbon",
+    },
+    "torrent": {
+        "id": "torrent",
+        "display_name": "Boiling Particle Torrent",
+        "sound": "fight_torrent",
+        "beam_shape": "particle_tunnel",
+        "muzzle": "pressure_burst",
+        "trail": "steam_pixels",
+        "impact": "soup_splash",
+        "screen": "warm_splash",
+        "camera_shake": 4.5,
+        "hit_shake": 10.5,
+        "hit_stop": HIT_IMPACT_DURATION * 0.95,
+        "intensity": 1.15,
+        "debug_name": "particle-torrent",
+    },
+    "emblem": {
+        "id": "emblem",
+        "display_name": "Spinning Emblem Beam",
+        "sound": "fight_emblem",
+        "beam_shape": "emblem_path",
+        "muzzle": "stamp_launch",
+        "trail": "image_particles",
+        "impact": "icon_spinout",
+        "screen": "sticker_pop",
+        "camera_shake": 3.7,
+        "hit_shake": 9.0,
+        "hit_stop": HIT_IMPACT_DURATION,
+        "intensity": 1.0,
+        "debug_name": "emblem-spin",
+    },
+    "chain": {
+        "id": "chain",
+        "display_name": "Crackling Chain Beam",
+        "sound": "fight_chain",
+        "beam_shape": "lightning_chain",
+        "muzzle": "zap_burst",
+        "trail": "branch_arcs",
+        "impact": "electric_crawl",
+        "screen": "electric_invert",
+        "camera_shake": 4.0,
+        "hit_shake": 10.0,
+        "hit_stop": HIT_IMPACT_DURATION * 1.05,
+        "intensity": 1.08,
+        "debug_name": "chain-lightning",
+    },
+    "fire": {
+        "id": "fire",
+        "display_name": "Pixel Fire Beam",
+        "sound": "fight_fire",
+        "beam_shape": "pixel_fire",
+        "muzzle": "ember_burst",
+        "trail": "fire_chunks",
+        "impact": "ember_wrap",
+        "screen": "hot_flash",
+        "camera_shake": 4.4,
+        "hit_shake": 11.0,
+        "hit_stop": HIT_IMPACT_DURATION,
+        "intensity": 1.2,
+        "debug_name": "pixel-fire",
+    },
+    "spiral": {
+        "id": "spiral",
+        "display_name": "Noodle Spiral Beam",
+        "sound": "fight_spiral",
+        "beam_shape": "spiral_ribbon",
+        "muzzle": "noodle_twist",
+        "trail": "orbiting_sparks",
+        "impact": "spiral_ring",
+        "screen": "rubber_pop",
+        "camera_shake": 3.5,
+        "hit_shake": 8.5,
+        "hit_stop": HIT_IMPACT_DURATION * 0.9,
+        "intensity": 1.0,
+        "debug_name": "noodle-spiral",
+    },
+}
+
+ATTACK_STAGE_CONFIG = {
+    "razor": {
+        "attackId": "broth_three_cut",
+        "attackType": "three_cut_slash",
+        "startupVisualDuration": 0.075,
+        "muzzleEffectType": "slash_fan",
+        "travelEffectType": "triple_jagged_ribbon",
+        "hitEffectType": "directional_slash_burst",
+        "victimReactionType": "slash_scars",
+        "impactFrameMotif": "giant_claw_cuts",
+        "aftermathEffectType": "blade_shards",
+        "missEffectType": "snap_shards",
+        "shieldBlockEffectType": "shield_crack_scrape",
+        "hitWord": "CHOP",
+        "particleDensity": 1.05,
+        "paletteFlashOpacity": 104,
+        "effectLifetime": 0.34,
+    },
+    "torrent": {
+        "attackId": "noodle_pressure_torrent",
+        "attackType": "pressure_stream",
+        "startupVisualDuration": 0.090,
+        "muzzleEffectType": "steam_pressure_pop",
+        "travelEffectType": "banded_particle_torrent",
+        "hitEffectType": "directional_soup_splat",
+        "victimReactionType": "drip_and_steam",
+        "impactFrameMotif": "pressure_cone_splash",
+        "aftermathEffectType": "falling_droplets",
+        "missEffectType": "steam_evaporation",
+        "shieldBlockEffectType": "wet_shield_deform",
+        "hitWord": "SPLASH",
+        "particleDensity": 1.35,
+        "paletteFlashOpacity": 94,
+        "effectLifetime": 0.54,
+    },
+    "emblem": {
+        "attackId": "bloo_sticker_storm",
+        "attackType": "stamp_sticker_beam",
+        "startupVisualDuration": 0.070,
+        "muzzleEffectType": "emblem_stamp",
+        "travelEffectType": "spinning_emblem_path",
+        "hitEffectType": "stamp_spinout",
+        "victimReactionType": "peeling_stickers",
+        "impactFrameMotif": "printed_offset_stamps",
+        "aftermathEffectType": "falling_stickers",
+        "missEffectType": "flutter_away",
+        "shieldBlockEffectType": "stick_and_repel",
+        "hitWord": "STAMP",
+        "particleDensity": 1.05,
+        "paletteFlashOpacity": 84,
+        "effectLifetime": 0.48,
+    },
+    "chain": {
+        "attackId": "party_crackle_chain",
+        "attackType": "branch_lightning",
+        "startupVisualDuration": 0.060,
+        "muzzleEffectType": "electric_corona",
+        "travelEffectType": "redrawn_branch_chain",
+        "hitEffectType": "voltage_knot",
+        "victimReactionType": "outline_crawl",
+        "impactFrameMotif": "full_screen_branches",
+        "aftermathEffectType": "jitter_sparks",
+        "missEffectType": "snap_fizzle",
+        "shieldBlockEffectType": "panel_crawl",
+        "hitWord": "ZAP",
+        "particleDensity": 1.12,
+        "paletteFlashOpacity": 96,
+        "effectLifetime": 0.34,
+    },
+    "fire": {
+        "attackId": "wing_pixel_foom",
+        "attackType": "pixel_fire_jet",
+        "startupVisualDuration": 0.082,
+        "muzzleEffectType": "fire_cough",
+        "travelEffectType": "flickering_pixel_fire",
+        "hitEffectType": "ember_wrap",
+        "victimReactionType": "ember_outline",
+        "impactFrameMotif": "blocky_flame_wrap",
+        "aftermathEffectType": "embers_and_smoke",
+        "missEffectType": "burnout_puff",
+        "shieldBlockEffectType": "fire_rim_sizzle",
+        "hitWord": "FOOM",
+        "particleDensity": 1.42,
+        "paletteFlashOpacity": 112,
+        "effectLifetime": 0.62,
+    },
+    "spiral": {
+        "attackId": "goat_noodle_lariat",
+        "attackType": "spiral_vortex",
+        "startupVisualDuration": 0.080,
+        "muzzleEffectType": "spiral_knot",
+        "travelEffectType": "three_strand_vortex",
+        "hitEffectType": "wrap_and_snap",
+        "victimReactionType": "noodle_wrap",
+        "impactFrameMotif": "coiling_bands",
+        "aftermathEffectType": "unwinding_curls",
+        "missEffectType": "unravel",
+        "shieldBlockEffectType": "rim_wrap_snap",
+        "hitWord": "WHIP",
+        "particleDensity": 1.16,
+        "paletteFlashOpacity": 88,
+        "effectLifetime": 0.46,
+    },
+}
+
+for attack_id, stage_config in ATTACK_STAGE_CONFIG.items():
+    ATTACK_PROFILES[attack_id].update(stage_config)
+    ATTACK_PROFILES[attack_id].setdefault("displayName", ATTACK_PROFILES[attack_id].get("display_name", attack_id))
+    ATTACK_PROFILES[attack_id].setdefault("palette", ())
+    ATTACK_PROFILES[attack_id].setdefault("muzzleSound", ATTACK_PROFILES[attack_id]["sound"])
+    ATTACK_PROFILES[attack_id].setdefault("travelSound", ATTACK_PROFILES[attack_id]["sound"])
+    ATTACK_PROFILES[attack_id].setdefault("hitSound", "fight_hit")
+    ATTACK_PROFILES[attack_id].setdefault("shieldHitSound", "fight_shield_hit")
+    ATTACK_PROFILES[attack_id].setdefault("missSound", None)
+    ATTACK_PROFILES[attack_id].setdefault("impactFrameSound", "fight_hit")
+    ATTACK_PROFILES[attack_id].setdefault("particleTexture", None)
+    ATTACK_PROFILES[attack_id].setdefault("hitSpinoutTexture", None)
+    ATTACK_PROFILES[attack_id].setdefault("generatedIconStyle", attack_id)
+    ATTACK_PROFILES[attack_id].setdefault("screenShakeAmount", ATTACK_PROFILES[attack_id].get("camera_shake", FIGHT_SHAKE_ATTACK))
+    ATTACK_PROFILES[attack_id].setdefault("screenShakeDuration", 0.08)
+    ATTACK_PROFILES[attack_id].setdefault("hitStopDuration", ATTACK_PROFILES[attack_id].get("hit_stop", HIT_IMPACT_DURATION))
+    ATTACK_PROFILES[attack_id].setdefault("impactFrameDuration", HIT_IMPACT_DURATION)
+    ATTACK_PROFILES[attack_id].setdefault("renderPriority", 0)
+    ATTACK_PROFILES[attack_id].setdefault("debugName", ATTACK_PROFILES[attack_id].get("debug_name", attack_id))
 
 
 def clamp(value, lo, hi):
@@ -240,6 +530,13 @@ def heading_vec(deg):
 
 def vec_heading(dx, dy):
     return math.degrees(math.atan2(dx, dy))
+
+
+def normalize_vec(dx, dy, fallback=(0.0, 1.0)):
+    length = math.hypot(dx, dy)
+    if length <= 0.0001:
+        return fallback
+    return dx / length, dy / length
 
 
 def radar_to_world(raw_x_m, raw_y_m):
@@ -298,6 +595,7 @@ class Player:
     x: float
     y: float
     heading: float
+    character_id: str = "broth_beast"
     vx: float = 0.0
     vy: float = 0.0
     hp: int = MAX_HP
@@ -354,6 +652,9 @@ class BeamEffect:
     duration: float = 0.28
     hit_point: Optional[tuple] = None
     blocked: bool = False
+    attacker_id: Optional[int] = None
+    attack_type: str = "razor"
+    direction: tuple = (0.0, 1.0)
 
 
 @dataclass
@@ -378,6 +679,8 @@ class ImpactFrame:
     attacker_id: Optional[int] = None
     target_id: Optional[int] = None
     hit_point: Optional[tuple] = None
+    attack_type: str = "razor"
+    direction: tuple = (0.0, 1.0)
 
 
 @dataclass
@@ -423,6 +726,48 @@ class MenuSlash:
     created_at: float
     life: float
     width: float = 18.0
+
+
+@dataclass
+class FightParticle:
+    x: float
+    y: float
+    vx: float
+    vy: float
+    color: tuple
+    size: float
+    created_at: float
+    life: float
+    shape: str = "pixel"
+    layer: str = "front"
+    angle: float = 0.0
+    spin: float = 0.0
+    gravity: float = 0.0
+    alpha: float = 255.0
+    sprite_key: Optional[str] = None
+
+
+@dataclass
+class FightSplat:
+    x: float
+    y: float
+    color: tuple
+    dark_color: tuple
+    highlight: tuple
+    created_at: float
+    life: float
+    radius: float
+    seed: int
+    kind: str = "splat"
+    direction: tuple = (0.0, 1.0)
+
+
+@dataclass
+class ScreenFlash:
+    color: tuple
+    created_at: float
+    duration: float
+    alpha: float = 100.0
 
 
 class SerialTransport:
@@ -480,12 +825,17 @@ class SoundBank:
     def __init__(self, enabled=True):
         self.enabled = enabled
         self.sounds = {}
+        self.line_sounds = {}
+        self.last_line_at = {}
         if not enabled:
             return
         try:
             if not pygame.mixer.get_init():
                 pygame.mixer.init(44100, -16, 2, 256)
+            if ENABLE_PROCEDURAL_AUDIO_GENERATION:
+                self.ensure_generated_fight_audio()
             self.make_sounds()
+            self.load_generated_fight_audio()
         except Exception as exc:
             print(f"audio disabled: {exc}")
             self.enabled = False
@@ -517,6 +867,21 @@ class SoundBank:
         self.sounds["round"] = self.sequence([(523, 0.06), (659, 0.06), (784, 0.06), (1046, 0.14)], 0.42, "square")
         self.sounds["invalid"] = self.sequence([(190, 0.055), (142, 0.08)], 0.24, "square")
         self.sounds["round_win"] = self.sounds["round"]
+        self.sounds["fight_razor"] = self.fight_attack_sound(940, 1880, 0.20, 0.50, 0.10)
+        self.sounds["fight_torrent"] = self.noise_burst(0.24, 0.54, 110, 920)
+        self.sounds["fight_emblem"] = self.fight_attack_sound(520, 1320, 0.22, 0.42, 0.28)
+        self.sounds["fight_chain"] = self.electric_sound()
+        self.sounds["fight_fire"] = self.noise_burst(0.20, 0.52, 860, 2600)
+        self.sounds["fight_spiral"] = self.fight_attack_sound(360, 1140, 0.24, 0.44, 0.40)
+        self.sounds["fight_hit"] = self.noise_burst(0.16, 0.58, 80, 520)
+        self.sounds["fight_shield"] = self.sequence([(622, 0.04), (932, 0.06), (1244, 0.05)], 0.38, "sine")
+        self.sounds["fight_shield_hit"] = self.sequence([(1397, 0.035), (740, 0.055), (1865, 0.08)], 0.50, "square")
+        self.sounds["fight_round_win"] = self.sequence([(392, 0.08), (523, 0.07), (659, 0.07), (1046, 0.18)], 0.48, "square")
+        self.sounds["fight_match_win"] = self.menu_go_sound()
+        self.sounds["fight_count_3"] = self.menu_count_sound(320, 620, 0.18, 0.46)
+        self.sounds["fight_count_2"] = self.menu_count_sound(420, 820, 0.18, 0.48)
+        self.sounds["fight_count_1"] = self.menu_count_sound(180, 520, 0.22, 0.54)
+        self.sounds["fight_count_go"] = self.menu_go_sound()
 
     def envelope(self, i, total):
         if total <= 1:
@@ -635,6 +1000,39 @@ class SoundBank:
             samples.append((sparkle + bass + crack) * self.envelope(i, total))
         return self.build(samples, 0.50)
 
+    def fight_attack_sound(self, start_freq, end_freq, duration, gain, wobble):
+        rate = 44100
+        total = int(rate * duration)
+        samples = []
+        phase = 0.0
+        phase_b = 0.0
+        rng = random.Random(int(start_freq + end_freq + wobble * 1000))
+        for i in range(total):
+            t = i / max(1, total - 1)
+            freq = start_freq + (end_freq - start_freq) * (t ** 0.72)
+            freq += math.sin(t * math.tau * 8.0) * wobble * 130.0
+            phase += math.tau * freq / rate
+            phase_b += math.tau * (freq * 0.52) / rate
+            noise = (rng.random() * 2 - 1) * 0.22 * max(0.0, 1.0 - t * 2.2)
+            sample = self.wave_sample(phase, "square") * 0.30 + math.sin(phase_b) * 0.58 + noise
+            samples.append(sample * self.envelope(i, total))
+        return self.build(samples, gain)
+
+    def electric_sound(self):
+        rate = 44100
+        total = int(rate * 0.20)
+        samples = []
+        rng = random.Random(508)
+        phase = 0.0
+        for i in range(total):
+            t = i / max(1, total - 1)
+            freq = 940 + 720 * math.sin(t * math.tau * 13.0)
+            phase += math.tau * freq / rate
+            crackle = (rng.random() * 2 - 1) * (0.75 if rng.random() > 0.72 else 0.28)
+            sample = math.sin(phase) * 0.42 + crackle * (1.0 - t * 0.55)
+            samples.append(sample * self.envelope(i, total))
+        return self.build(samples, 0.46)
+
     def noise_burst(self, duration, gain, lo, hi):
         rate = 44100
         total = int(rate * duration)
@@ -650,6 +1048,125 @@ class SoundBank:
             samples.append((tone + noise) * self.envelope(i, total))
         return self.build(samples, gain)
 
+    def ensure_generated_fight_audio(self):
+        rate = 22050
+        for folder in ("ui", "rounds", "impacts"):
+            (GENERATED_AUDIO_DIR / folder).mkdir(parents=True, exist_ok=True)
+        generated = {
+            GENERATED_AUDIO_DIR / "ui" / "countdown_3.wav": self.wav_tone_stack(rate, 300, 610, 0.22, 0.46, 11),
+            GENERATED_AUDIO_DIR / "ui" / "countdown_2.wav": self.wav_tone_stack(rate, 420, 820, 0.22, 0.46, 12),
+            GENERATED_AUDIO_DIR / "ui" / "countdown_1.wav": self.wav_tone_stack(rate, 180, 520, 0.24, 0.52, 13),
+            GENERATED_AUDIO_DIR / "ui" / "fight.wav": self.wav_tone_stack(rate, 260, 1480, 0.36, 0.58, 14),
+            GENERATED_AUDIO_DIR / "rounds" / "round_win.wav": self.wav_tone_stack(rate, 360, 1040, 0.42, 0.50, 15),
+            GENERATED_AUDIO_DIR / "rounds" / "match_win.wav": self.wav_tone_stack(rate, 220, 1720, 0.62, 0.58, 16),
+            GENERATED_AUDIO_DIR / "impacts" / "hit_crack.wav": self.wav_noise_chirp(rate, 0.18, 0.55, 17),
+            GENERATED_AUDIO_DIR / "impacts" / "shield_hit.wav": self.wav_tone_stack(rate, 760, 1560, 0.20, 0.45, 18),
+        }
+        for path, samples in generated.items():
+            self.write_wav_if_missing(path, samples, rate)
+        for index, character in enumerate(CHARACTER_SLOTS):
+            cid = character["id"]
+            root = GENERATED_AUDIO_DIR / "characters" / cid
+            for category in ("select", "attack", "hit", "victory"):
+                (root / category).mkdir(parents=True, exist_ok=True)
+            base = 230 + index * 73
+            for n in range(1, 3):
+                self.write_wav_if_missing(
+                    root / "select" / f"{cid}_select_{n:02d}.wav",
+                    self.wav_voice_placeholder(rate, base + n * 23, 0.38, index * 10 + n),
+                    rate,
+                )
+            for n in range(1, 4):
+                self.write_wav_if_missing(
+                    root / "attack" / f"{cid}_attack_{n:02d}.wav",
+                    self.wav_voice_placeholder(rate, base + 120 + n * 31, 0.28, index * 20 + n),
+                    rate,
+                )
+            self.write_wav_if_missing(
+                root / "hit" / f"{cid}_hit_01.wav",
+                self.wav_noise_chirp(rate, 0.20, 0.42, index * 30 + 4),
+                rate,
+            )
+            self.write_wav_if_missing(
+                root / "victory" / f"{cid}_victory_01.wav",
+                self.wav_voice_placeholder(rate, base + 280, 0.58, index * 40 + 5),
+                rate,
+            )
+
+    def write_wav_if_missing(self, path, samples, rate):
+        if path.exists():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        peak = max(0.001, max(abs(sample) for sample in samples))
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            frames = bytearray()
+            for sample in samples:
+                value = int(clamp(sample / peak * 0.78, -1.0, 1.0) * 32767)
+                frames += struct.pack("<h", value)
+            wav.writeframes(bytes(frames))
+
+    def wav_tone_stack(self, rate, start_freq, end_freq, duration, gain, seed):
+        rng = random.Random(seed)
+        total = int(rate * duration)
+        samples = []
+        phase_a = 0.0
+        phase_b = 0.0
+        for i in range(total):
+            t = i / max(1, total - 1)
+            freq = start_freq + (end_freq - start_freq) * (t ** 0.65)
+            phase_a += math.tau * freq / rate
+            phase_b += math.tau * (freq * 0.5 + 14 * math.sin(t * math.tau * 6)) / rate
+            noise = (rng.random() * 2 - 1) * 0.10 * max(0.0, 1.0 - t * 3)
+            samples.append((math.sin(phase_a) * 0.44 + math.sin(phase_b) * 0.42 + noise) * gain * self.envelope(i, total))
+        return samples
+
+    def wav_noise_chirp(self, rate, duration, gain, seed):
+        rng = random.Random(seed)
+        total = int(rate * duration)
+        phase = 0.0
+        samples = []
+        for i in range(total):
+            t = i / max(1, total - 1)
+            phase += math.tau * (120 + 800 * (1.0 - t)) / rate
+            samples.append((math.sin(phase) * 0.35 + (rng.random() * 2 - 1) * 0.75) * gain * self.envelope(i, total))
+        return samples
+
+    def wav_voice_placeholder(self, rate, base_freq, duration, seed):
+        rng = random.Random(seed)
+        total = int(rate * duration)
+        samples = []
+        phase = 0.0
+        for i in range(total):
+            t = i / max(1, total - 1)
+            syllable = 1.0 if int(t * 10) % 3 != 1 else 0.45
+            freq = base_freq * (1.0 + 0.18 * math.sin(t * math.tau * 5 + seed))
+            freq += rng.choice((-18, 0, 24)) if i % 900 == 0 else 0
+            phase += math.tau * freq / rate
+            buzz = 1.0 if math.sin(phase) > 0 else -1.0
+            tone = math.sin(phase * 0.51) * 0.36 + buzz * 0.18
+            samples.append(tone * syllable * 0.55 * self.envelope(i, total))
+        return samples
+
+    def load_generated_fight_audio(self):
+        self.line_sounds.clear()
+        for character in CHARACTER_SLOTS:
+            cid = character["id"]
+            root = GENERATED_AUDIO_DIR / "characters" / cid
+            for category in ("select", "attack", "hit", "victory"):
+                key = (cid, category)
+                self.line_sounds[key] = []
+                folder = root / category
+                if not folder.exists():
+                    continue
+                for path in sorted(folder.glob("*.wav")):
+                    try:
+                        self.line_sounds[key].append(pygame.mixer.Sound(str(path)))
+                    except pygame.error:
+                        pass
+
     def play(self, name, volume=1.0):
         if not self.enabled:
             return
@@ -657,6 +1174,22 @@ class SoundBank:
         if sound:
             sound.set_volume(clamp(volume, 0.0, 1.0))
             sound.play()
+
+    def play_line(self, character_id, category, volume=1.0, cooldown=0.0):
+        if not self.enabled:
+            return
+        now = time.time()
+        key = (character_id, category)
+        last = self.last_line_at.get(key, 0.0)
+        if cooldown and now - last < cooldown:
+            return
+        choices = self.line_sounds.get(key, [])
+        if not choices:
+            return
+        sound = random.choice(choices)
+        sound.set_volume(clamp(volume, 0.0, 1.0))
+        sound.play()
+        self.last_line_at[key] = now
 
 
 class SoupocalypseApp:
@@ -679,11 +1212,14 @@ class SoupocalypseApp:
             self.transport = SerialTransport(args.port, args.baud, self.incoming)
             self.transport.start()
         self.players = {
-            101: Player(101, "Broth Beast", PALETTE["p1"], PALETTE["p1_dark"], -0.95, 2.5, 90),
-            102: Player(102, "Noodle Wyrm", PALETTE["p2"], PALETTE["p2_dark"], 0.95, 2.5, -90),
+            101: Player(101, "Broth Beast", PALETTE["p1"], PALETTE["p1_dark"], -0.95, 2.5, 90, "broth_beast"),
+            102: Player(102, "Noodle Wyrm", PALETTE["p2"], PALETTE["p2_dark"], 0.95, 2.5, -90, "noodle_wyrm"),
         }
         self.radar_blobs = {}
         self.particles = []
+        self.fight_particles = []
+        self.fight_splats = []
+        self.screen_flashes = []
         self.beams = []
         self.impact_frames = []
         self.logs = []
@@ -696,6 +1232,14 @@ class SoupocalypseApp:
         self.hit_stop_until = 0.0
         self.shake_until = 0.0
         self.shake_power = 0.0
+        self.arena_pulse_until = 0.0
+        self.round_winner_id = None
+        self.match_winner_id = None
+        self.round_presentation_started_at = 0.0
+        self.round_countdown_started_at = 0.0
+        self.round_countdown_last_step = -1
+        self.match_win_started_at = 0.0
+        self.hp_flash_until = {101: 0.0, 102: 0.0}
         self.pending_actions = []
         self.last_tick = time.time()
         self.fake_actions = {101: 0, 102: 0}
@@ -717,6 +1261,7 @@ class SoupocalypseApp:
         self.menu_notice = ""
         self.menu_notice_until = 0.0
         self.character_cache = {}
+        self.icon_cache = {}
         self.bg_cache = None
         self.bg_cache_size = None
 
@@ -801,7 +1346,7 @@ class SoupocalypseApp:
             self.log(f"P{pid} compass calibration failed; move bigger")
             self.sounds.play("invalid")
 
-    def reset_round(self):
+    def reset_round(self, start_playing=True):
         now = time.time()
         for player in self.players.values():
             player.hp = MAX_HP
@@ -811,19 +1356,46 @@ class SoupocalypseApp:
             player.bubble_ready_at = now + 0.4
         self.beams.clear()
         self.particles.clear()
+        self.fight_particles.clear()
+        self.fight_splats.clear()
         self.impact_frames.clear()
         self.pending_actions.clear()
         self.hit_stop_until = 0.0
         self.freeze_until = 0.0
-        self.match_state = "playing"
-        self.round_message = "FIGHT"
-        self.sounds.play("ready")
+        self.screen_flashes.clear()
+        self.arena_pulse_until = now + 0.34
+        if start_playing:
+            self.round_winner_id = None
+            self.round_presentation_started_at = 0.0
+            self.round_countdown_started_at = 0.0
+            self.match_state = "playing"
+            self.round_message = "FIGHT"
+            self.sounds.play("ready")
 
     def reset_match(self):
         self.apply_menu_character_choices()
         for player in self.players.values():
             player.wins = 0
         self.reset_round()
+
+    def start_next_round_countdown(self):
+        now = time.time()
+        self.reset_round(start_playing=False)
+        self.match_state = "round_countdown"
+        self.round_message = "NEXT ROUND"
+        self.round_countdown_started_at = now
+        self.round_countdown_last_step = -1
+        self.add_screen_flash(PALETTE["soup"], 0.18, 80)
+
+    def finish_next_round_countdown(self):
+        now = time.time()
+        self.match_state = "playing"
+        self.round_message = "FIGHT"
+        for player in self.players.values():
+            player.beam_ready_at = now + 0.16
+            player.bubble_ready_at = now + 0.16
+        self.add_screen_flash(PALETTE["white"], 0.16, 120)
+        self.shake(0.18, 8.0)
 
     def open_character_select(self):
         now = time.time()
@@ -832,9 +1404,18 @@ class SoupocalypseApp:
         self.round_reset_at = 0.0
         self.freeze_until = 0.0
         self.hit_stop_until = 0.0
+        self.round_winner_id = None
+        self.match_winner_id = None
+        self.round_presentation_started_at = 0.0
+        self.round_countdown_started_at = 0.0
+        self.round_countdown_last_step = -1
+        self.match_win_started_at = 0.0
         self.pending_actions.clear()
         self.beams.clear()
         self.impact_frames.clear()
+        self.fight_particles.clear()
+        self.fight_splats.clear()
+        self.screen_flashes.clear()
         self.menu_particles.clear()
         self.menu_slashes.clear()
         self.menu_countdown_started_at = 0.0
@@ -863,12 +1444,38 @@ class SoupocalypseApp:
             player.label = character["name"]
             player.color = character["theme"]
             player.dark_color = character["dark"]
+            player.character_id = character["id"]
             self.player_sprite_paths[pid] = character["portrait"]
         self.sprite_cache.clear()
 
     def play_menu_sound(self, name, extra=1.0):
         volume = MENU_SFX_VOLUME.get(name, 1.0) * MENU_SFX_MASTER_VOLUME * extra
         self.sounds.play(name, volume)
+
+    def character_by_id(self, character_id):
+        for character in CHARACTER_SLOTS:
+            if character["id"] == character_id:
+                return character
+        return CHARACTER_SLOTS[0]
+
+    def character_for_player(self, player):
+        return self.character_by_id(player.character_id)
+
+    def attack_profile_for_player(self, player):
+        character = self.character_for_player(player)
+        return ATTACK_PROFILES.get(character.get("attack_type", "razor"), ATTACK_PROFILES["razor"])
+
+    def play_fight_sound(self, name, extra=1.0):
+        volume = FIGHT_SFX_VOLUME.get(name, 1.0) * FIGHT_SFX_MASTER_VOLUME * extra
+        self.sounds.play(name, volume)
+
+    def play_character_line(self, player, category, cooldown=0.0, extra=1.0):
+        self.sounds.play_line(
+            player.character_id,
+            category,
+            FIGHT_VOICE_MASTER_VOLUME * extra,
+            cooldown=cooldown,
+        )
 
     def handle_serial_line(self, line):
         parts = [p.strip() for p in line.split(",")]
@@ -1117,6 +1724,7 @@ class SoupocalypseApp:
             self.play_menu_sound("menu_lock")
             self.play_menu_sound("menu_panel", 0.88)
             self.play_menu_sound("menu_splash", 0.72)
+            self.sounds.play_line(character["id"], "select", FIGHT_VOICE_MASTER_VOLUME * 0.82, cooldown=0.2)
             self.spawn_menu_lock_fx(state.player_id, index)
             self.shake(0.12, MENU_SHAKE_SELECT)
             if self.all_menu_players_selected():
@@ -1209,8 +1817,9 @@ class SoupocalypseApp:
                 return
             player.bubble_ready_at = now + BUBBLE_COOLDOWN
             player.bubble_until = now + BUBBLE_DURATION
-            self.sounds.play("bubble")
+            self.play_fight_sound("fight_shield")
             self.spawn_ring(player.x, player.y, PALETTE["bubble"], 34)
+            self.spawn_shield_flare(player)
             self.send_fx("bubble")
 
     def assisted_beam_direction(self, player, target, dx, dy):
@@ -1228,11 +1837,15 @@ class SoupocalypseApp:
 
     def fire_beam(self, player):
         now = time.time()
+        character = self.character_for_player(player)
+        profile = self.attack_profile_for_player(player)
         dx, dy = heading_vec(player.heading)
         target = self.players[102 if player.player_id == 101 else 101]
         dx, dy = self.assisted_beam_direction(player, target, dx, dy)
+        direction = (dx, dy)
         start = (player.x + dx * 0.18, player.y + dy * 0.18)
         end = (player.x + dx * BEAM_RANGE_M, player.y + dy * BEAM_RANGE_M)
+        self.spawn_startup_fx(player, start, direction)
         hit_point = None
         blocked = False
         if target.alive:
@@ -1242,8 +1855,10 @@ class SoupocalypseApp:
                     blocked = True
                     hit_point = target.position()
                     self.sounds.play("block")
+                    self.play_fight_sound(profile.get("shieldHitSound", "fight_shield_hit"))
                     self.spawn_burst(target.x, target.y, PALETTE["bubble"], 52, power=1.35)
-                    self.shake(0.10, 4.0)
+                    self.spawn_shield_block_fx(target, hit_point, character, profile, direction)
+                    self.shake(0.10, SHIELD_BLOCK_SHAKE)
                     self.send_fx("bubble_block")
             if not blocked:
                 distance, along = point_segment_distance(target.position(), start, end)
@@ -1252,29 +1867,55 @@ class SoupocalypseApp:
                         start[0] + (end[0] - start[0]) * along,
                         start[1] + (end[1] - start[1]) * along,
                     )
-                    self.damage_player(player, target, hit_point)
+                    self.damage_player(player, target, hit_point, direction)
 
-        beam = BeamEffect(start, end, player.color, now, hit_point=hit_point, blocked=blocked)
+        beam = BeamEffect(
+            start, end, player.color, now,
+            hit_point=hit_point,
+            blocked=blocked,
+            attacker_id=player.player_id,
+            attack_type=profile["id"],
+            direction=direction,
+        )
         self.beams.append(beam)
-        self.spawn_beam_particles(start, hit_point if hit_point else end, player.color)
-        self.spawn_burst(start[0], start[1], player.color, 28, power=0.7)
-        self.sounds.play("beam")
+        visible_end = hit_point if hit_point else end
+        self.spawn_attack_particles(player, start, visible_end, hit_point, blocked, direction)
+        if hit_point is None:
+            self.spawn_miss_fx(player, end, direction)
+        self.spawn_burst(start[0], start[1], player.color, 16, power=0.65)
+        self.play_fight_sound(profile.get("muzzleSound", profile["sound"]))
+        travel_sound = profile.get("travelSound")
+        if travel_sound and travel_sound != profile.get("muzzleSound", profile["sound"]):
+            self.play_fight_sound(travel_sound, extra=0.62)
+        self.play_character_line(player, "attack", cooldown=ATTACK_LINE_COOLDOWN, extra=0.92)
+        self.add_screen_flash(character["theme"], 0.10, profile.get("paletteFlashOpacity", 44) * 0.42)
+        self.arena_pulse_until = max(self.arena_pulse_until, now + 0.22)
+        self.shake(profile.get("screenShakeDuration", 0.08), profile.get("screenShakeAmount", profile["camera_shake"]))
         self.send_fx("beam_fire")
 
-    def damage_player(self, attacker, target, hit_point):
+    def damage_player(self, attacker, target, hit_point, direction):
         now = time.time()
+        profile = self.attack_profile_for_player(attacker)
+        character = self.character_for_player(attacker)
         target.hp -= 1
-        self.sounds.play("hit")
+        self.hp_flash_until[target.player_id] = now + 0.52
+        self.play_fight_sound(profile.get("hitSound", "fight_hit"))
+        self.play_character_line(target, "hit", cooldown=0.65, extra=0.64)
         self.spawn_burst(hit_point[0], hit_point[1], PALETTE["white"], 34, power=1.0)
         self.spawn_burst(target.x, target.y, attacker.color, 28, power=0.8)
+        self.spawn_hit_presentation(attacker, target, hit_point, direction)
+        self.add_screen_flash(character["highlight"], FIGHT_FLASH_DURATION, profile.get("paletteFlashOpacity", 92))
         self.add_impact(
-            "hit", HIT_IMPACT_DURATION, attacker.color,
+            "hit", profile.get("impactFrameDuration", HIT_IMPACT_DURATION), attacker.color,
             attacker_id=attacker.player_id,
             target_id=target.player_id,
             hit_point=hit_point,
+            attack_type=profile["id"],
+            direction=direction,
         )
-        self.hit_stop_until = max(self.hit_stop_until, now + HIT_IMPACT_DURATION)
-        self.shake(0.16, 8.0)
+        if ENABLE_HIT_STOP:
+            self.hit_stop_until = max(self.hit_stop_until, now + profile.get("hitStopDuration", profile["hit_stop"]))
+        self.shake(0.16, profile["hit_shake"])
         self.send_fx("beam_hit")
         if target.hp <= 0:
             target.alive = False
@@ -1284,29 +1925,45 @@ class SoupocalypseApp:
     def handle_round_end(self, winner, loser):
         now = time.time()
         self.match_state = "round_over"
-        self.round_reset_at = now + ROUND_RESET_DELAY
+        self.round_reset_at = now + ROUND_WIN_PRESENTATION
+        self.round_winner_id = winner.player_id
+        self.round_presentation_started_at = now
         self.pending_actions.clear()
         self.spawn_burst(loser.x, loser.y, PALETTE["soup"], 82, power=1.75)
+        self.spawn_round_win_fx(winner, loser)
         self.sounds.play("ko")
+        self.play_fight_sound("fight_round_win")
+        self.play_character_line(winner, "victory", cooldown=1.0, extra=0.8)
+        self.add_screen_flash(winner.color, 0.20, 110)
+        self.shake(0.24, FIGHT_SHAKE_KO)
         self.send_fx("ko")
         if winner.wins >= WIN_ROUNDS:
             self.match_state = "match_over"
             self.round_message = f"{winner.label.upper()} WINS THE LAST BOWL"
-            self.round_reset_at = now + 3.2
-            self.sounds.play("round")
+            self.round_reset_at = now + MATCH_WIN_SCREEN_MIN_DURATION
+            self.match_winner_id = winner.player_id
+            self.match_win_started_at = now
+            self.play_fight_sound("fight_match_win")
+            self.play_character_line(winner, "victory", cooldown=0.0, extra=1.0)
+            self.add_screen_flash(winner.color, 0.32, 150)
+            self.shake(0.32, FIGHT_SHAKE_MATCH_WIN)
             self.send_fx("match_win")
         else:
             self.round_message = f"{winner.label.upper()} TAKES THE ROUND"
 
-    def add_impact(self, kind, duration, color, attacker_id=None, target_id=None, hit_point=None):
+    def add_impact(self, kind, duration, color, attacker_id=None, target_id=None, hit_point=None, attack_type="razor", direction=(0.0, 1.0)):
         self.impact_frames.append(ImpactFrame(
             kind, time.time(), duration, color,
             attacker_id=attacker_id,
             target_id=target_id,
             hit_point=hit_point,
+            attack_type=attack_type,
+            direction=direction,
         ))
 
     def shake(self, duration, power):
+        if not ENABLE_SCREEN_SHAKE:
+            return
         self.shake_until = max(self.shake_until, time.time() + duration)
         self.shake_power = max(self.shake_power, power)
 
@@ -1365,12 +2022,15 @@ class SoupocalypseApp:
                             self.menu_notice = "LOCK BOTH PLAYERS"
                             self.menu_notice_until = time.time() + 0.6
                             self.play_menu_sound("menu_deny")
+                    elif self.match_state == "match_over":
+                        self.sounds.play("menu_select")
+                        self.open_character_select()
                     else:
                         self.sounds.play("menu_select")
                         self.reset_match()
                 elif event.key == pygame.K_m:
                     self.sounds.play("menu_move")
-                elif event.key == pygame.K_d:
+                elif event.key == pygame.K_z:
                     self.debug_radar = not self.debug_radar
                     self.sounds.play("menu_move")
                 elif event.key == pygame.K_0:
@@ -1437,11 +2097,11 @@ class SoupocalypseApp:
         if self.match_state in MENU_STATES:
             self.update_character_select(dt, now)
 
-        if self.match_state in ("round_over", "match_over") and now >= self.round_reset_at:
-            if self.match_state == "match_over":
-                self.open_character_select()
-            else:
-                self.reset_round()
+        if self.match_state == "round_over" and now >= self.round_reset_at:
+            self.start_next_round_countdown()
+
+        if self.match_state == "round_countdown":
+            self.update_round_countdown(now)
 
         self.flush_queued_actions()
 
@@ -1465,6 +2125,7 @@ class SoupocalypseApp:
                 particle.vy *= 0.985
                 alive_particles.append(particle)
         self.particles = alive_particles[-900:]
+        self.update_fight_particles(dt, now)
         if now > self.shake_until:
             self.shake_power *= 0.85
 
@@ -1672,6 +2333,473 @@ class SoupocalypseApp:
         self.spawn_menu_sparks(w * 0.68, h * 0.52, p2_char["highlight"], 70, 520)
         self.spawn_menu_slash(w // 2, h // 2, PALETTE["white"], 9, spread=0.22)
 
+    def update_round_countdown(self, now):
+        labels = ("3", "2", "1", "FIGHT!")
+        elapsed = now - self.round_countdown_started_at
+        step = int(elapsed / NEXT_ROUND_COUNTDOWN_STEP)
+        if step < len(labels) and step != self.round_countdown_last_step:
+            self.round_countdown_last_step = step
+            sound = ("fight_count_3", "fight_count_2", "fight_count_1", "fight_count_go")[step]
+            self.play_fight_sound(sound)
+            color = self.players[101].color if step % 2 == 0 else self.players[102].color
+            self.add_screen_flash(color, 0.12 if step < 3 else 0.18, 70 if step < 3 else 115)
+            self.spawn_countdown_fx(color, step)
+            self.shake(0.08 if step < 3 else 0.16, 4.0 if step < 3 else 8.0)
+        if elapsed >= NEXT_ROUND_COUNTDOWN_TOTAL:
+            self.finish_next_round_countdown()
+
+    def update_fight_particles(self, dt, now):
+        alive = []
+        for particle in self.fight_particles:
+            age = now - particle.created_at
+            if age < particle.life:
+                particle.x += particle.vx * dt
+                particle.y += particle.vy * dt
+                particle.vy += particle.gravity * dt
+                particle.vx *= 0.986
+                particle.vy *= 0.986
+                particle.angle += particle.spin * dt
+                alive.append(particle)
+        self.fight_particles = alive[-FIGHT_MAX_PARTICLES:]
+        self.fight_splats = [
+            splat for splat in self.fight_splats
+            if now - splat.created_at < splat.life
+        ][-80:]
+        self.screen_flashes = [
+            flash for flash in self.screen_flashes
+            if now - flash.created_at < flash.duration
+        ][-16:]
+
+    def add_screen_flash(self, color, duration, alpha):
+        if not ENABLE_FIGHT_JUICE:
+            return
+        self.screen_flashes.append(ScreenFlash(color, time.time(), duration, alpha))
+
+    def spawn_fight_particle(self, x, y, vx, vy, color, size, life, shape="pixel", layer="front", angle=0.0, spin=0.0, gravity=0.0, alpha=255.0, sprite_key=None):
+        if not ENABLE_GENERATED_PARTICLES:
+            return
+        self.fight_particles.append(FightParticle(
+            x, y, vx, vy, color, size, time.time(), life,
+            shape=shape, layer=layer, angle=angle, spin=spin,
+            gravity=gravity, alpha=alpha, sprite_key=sprite_key,
+        ))
+
+    def attack_particle_budget(self, profile, base_count):
+        density = profile.get("particleDensity", 1.0) * ATTACK_EFFECT_INTENSITY
+        return max(6, min(ATTACK_MAX_PARTICLES, int(base_count * density)))
+
+    def attack_colors(self, character):
+        return (
+            character["dark"],
+            character["theme"],
+            character["secondary"],
+            character["highlight"],
+            character["accent"],
+            PALETTE["white"],
+        )
+
+    def spawn_startup_fx(self, player, start, direction):
+        character = self.character_for_player(player)
+        profile = self.attack_profile_for_player(player)
+        attack_type = profile["id"]
+        dx, dy = normalize_vec(*direction)
+        nx, ny = -dy, dx
+        sx, sy = start
+        now = time.time()
+        life = profile.get("startupVisualDuration", ATTACK_STARTUP_VISUAL)
+        self.fight_splats.append(FightSplat(
+            player.x, player.y + 0.18,
+            character["theme"], character["dark"], character["highlight"],
+            now, max(0.12, life * 2.8), 0.34, random.randint(0, 999999),
+            kind=f"startup_{attack_type}", direction=direction,
+        ))
+        count = self.attack_particle_budget(profile, 18 if attack_type != "torrent" else 30)
+        for i in range(count):
+            angle = math.tau * i / count + random.uniform(-0.30, 0.30)
+            orbit = random.uniform(0.14, 0.44)
+            px = sx + math.cos(angle) * orbit + nx * random.uniform(-0.05, 0.05)
+            py = sy + math.sin(angle) * orbit + ny * random.uniform(-0.05, 0.05)
+            vx = (sx - px) * random.uniform(5.5, 9.5) + dx * random.uniform(0.1, 0.5)
+            vy = (sy - py) * random.uniform(5.5, 9.5) + dy * random.uniform(0.1, 0.5)
+            shape = {
+                "razor": "slash",
+                "torrent": "steam",
+                "emblem": "image",
+                "chain": "spark",
+                "fire": "ember",
+                "spiral": "streak",
+            }.get(attack_type, "diamond")
+            sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            self.spawn_fight_particle(
+                px, py, vx, vy,
+                random.choice(self.attack_colors(character)),
+                random.uniform(0.018, 0.055),
+                random.uniform(0.10, 0.22),
+                shape=shape,
+                layer="back" if i % 3 == 0 else "front",
+                angle=math.atan2(dy, dx) + random.uniform(-1.0, 1.0),
+                spin=random.uniform(-18.0, 18.0),
+                sprite_key=sprite_key,
+                alpha=185,
+            )
+
+    def spawn_attack_particles(self, player, start, end, hit_point, blocked, direction=None):
+        character = self.character_for_player(player)
+        profile = self.attack_profile_for_player(player)
+        attack_type = profile["id"]
+        sx, sy = start
+        ex, ey = end
+        vx = ex - sx
+        vy = ey - sy
+        length = max(0.001, math.hypot(vx, vy))
+        dx, dy = normalize_vec(*(direction if direction else (vx, vy)))
+        nx = -dy
+        ny = dx
+        base_count = {
+            "razor": 56,
+            "torrent": 118,
+            "emblem": 42,
+            "chain": 72,
+            "fire": 122,
+            "spiral": 72,
+        }.get(attack_type, 58)
+        count = self.attack_particle_budget(profile, base_count)
+        colors = self.attack_colors(character)
+        for i in range(count):
+            t = random.random()
+            pressure_band = 0.65 + 0.35 * math.sin(t * math.tau * 3.0 + time.time() * 12.0)
+            spread = 0.035 + t * 0.13
+            if attack_type in ("torrent", "fire"):
+                spread *= 1.75 + 0.35 * pressure_band
+            if attack_type == "spiral":
+                spread += abs(math.sin(t * math.tau * 3.0)) * 0.16
+            px = sx + vx * t + nx * random.uniform(-spread, spread)
+            py = sy + vy * t + ny * random.uniform(-spread, spread)
+            forward = random.uniform(0.45, 1.8)
+            side = random.uniform(-0.85, 0.85)
+            shape = "pixel"
+            size = random.uniform(0.018, 0.06)
+            life = random.uniform(0.14, 0.42)
+            gravity = 0.0
+            alpha = 230.0
+            if attack_type == "razor":
+                shape = random.choice(("slash", "diamond", "streak"))
+                size = random.uniform(0.025, 0.078)
+            elif attack_type == "torrent":
+                shape = random.choice(("pixel", "droplet", "steam", "streak"))
+                size = random.uniform(0.018, 0.090)
+                life = random.uniform(0.24, STEAM_FADE_DURATION)
+                alpha = 205.0
+            elif attack_type == "emblem":
+                shape = "image" if i % 3 == 0 else random.choice(("diamond", "spark", "streak"))
+                size = random.uniform(0.04, 0.11)
+                life = random.uniform(0.22, 0.52)
+            elif attack_type == "chain":
+                shape = random.choice(("spark", "streak", "diamond"))
+                size = random.uniform(0.018, 0.058)
+                life = random.uniform(0.11, 0.32)
+            elif attack_type == "fire":
+                shape = random.choice(("ember", "pixel", "steam"))
+                size = random.uniform(0.025, 0.095)
+                gravity = random.uniform(-0.38, -0.12)
+                life = random.uniform(0.26, 0.68)
+            elif attack_type == "spiral":
+                shape = random.choice(("diamond", "streak", "droplet"))
+                size = random.uniform(0.02, 0.068)
+                side += math.sin(t * math.tau * 4.0) * 0.65
+            sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            self.spawn_fight_particle(
+                px, py,
+                dx * forward + nx * side,
+                dy * forward + ny * side + (-0.35 if attack_type == "fire" else 0.0),
+                random.choice(colors),
+                size,
+                life,
+                shape=shape,
+                layer="front" if i % 4 else "back",
+                angle=math.atan2(dy, dx) + random.uniform(-0.7, 0.7),
+                spin=random.uniform(-9.0, 9.0),
+                gravity=gravity,
+                alpha=alpha,
+                sprite_key=sprite_key,
+            )
+
+        self.spawn_muzzle_fx(start, dx, dy, character, attack_type, profile)
+        if hit_point:
+            self.spawn_hit_splat(hit_point[0], hit_point[1], character, attack_type, direction=direction, kind=f"contact_{attack_type}")
+
+    def spawn_muzzle_fx(self, start, dx, dy, character, attack_type, profile=None):
+        sx, sy = start
+        nx, ny = -dy, dx
+        profile = profile or ATTACK_PROFILES.get(attack_type, ATTACK_PROFILES["razor"])
+        self.fight_splats.append(FightSplat(
+            sx, sy, character["theme"], character["dark"], character["highlight"],
+            time.time(), 0.18, 0.22 * ATTACK_MUZZLE_BURST_SIZE,
+            random.randint(0, 999999), kind=f"muzzle_{attack_type}", direction=(dx, dy),
+        ))
+        count = self.attack_particle_budget(profile, 26)
+        for i in range(count):
+            side = random.uniform(-1.15, 1.15)
+            power = random.uniform(0.6, 2.6) * ATTACK_MUZZLE_BURST_SIZE
+            if attack_type == "razor":
+                shape = "slash"
+                side += (i % 3 - 1) * 0.7
+            elif attack_type == "torrent":
+                shape = random.choice(("droplet", "steam", "streak"))
+            elif attack_type == "emblem":
+                shape = "image" if i % 3 == 0 else "spark"
+            elif attack_type == "chain":
+                shape = "spark"
+            elif attack_type == "fire":
+                shape = random.choice(("ember", "pixel", "steam"))
+            elif attack_type == "spiral":
+                shape = random.choice(("streak", "droplet"))
+                side += math.sin(i * math.tau / max(1, count)) * 0.85
+            else:
+                shape = "streak"
+            sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            self.spawn_fight_particle(
+                sx - dx * random.uniform(0.0, 0.05), sy - dy * random.uniform(0.0, 0.05),
+                dx * power + nx * side,
+                dy * power + ny * side + (-0.25 if attack_type == "fire" else 0.0),
+                random.choice((character["theme"], character["secondary"], character["highlight"], character["accent"])),
+                random.uniform(0.025, 0.090),
+                random.uniform(0.14, 0.36),
+                shape=shape,
+                angle=math.atan2(dy, dx) + random.uniform(-0.35, 0.35),
+                spin=random.uniform(-16, 16),
+                gravity=-0.10 if attack_type == "fire" else 0.0,
+                sprite_key=sprite_key,
+            )
+
+    def spawn_miss_fx(self, player, end, direction):
+        character = self.character_for_player(player)
+        profile = self.attack_profile_for_player(player)
+        attack_type = profile["id"]
+        dx, dy = normalize_vec(*direction)
+        nx, ny = -dy, dx
+        ex, ey = end
+        self.fight_splats.append(FightSplat(
+            ex, ey, character["theme"], character["dark"], character["highlight"],
+            time.time(), 0.26 + profile.get("effectLifetime", 0.34) * 0.28,
+            0.22, random.randint(0, 999999),
+            kind=f"miss_{attack_type}", direction=direction,
+        ))
+        count = self.attack_particle_budget(profile, 14 if attack_type != "torrent" else 24)
+        for i in range(count):
+            side = random.uniform(-1.3, 1.3)
+            back = random.uniform(-0.8, 0.35)
+            shape = {
+                "razor": "slash",
+                "torrent": "steam",
+                "emblem": "image",
+                "chain": "spark",
+                "fire": "steam",
+                "spiral": "streak",
+            }.get(attack_type, "diamond")
+            sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            self.spawn_fight_particle(
+                ex + nx * random.uniform(-0.10, 0.10),
+                ey + ny * random.uniform(-0.10, 0.10),
+                dx * back + nx * side,
+                dy * back + ny * side + (-0.25 if attack_type == "fire" else 0.0),
+                random.choice(self.attack_colors(character)),
+                random.uniform(0.018, 0.060) * ATTACK_MISS_BURST_SIZE,
+                random.uniform(0.20, 0.48),
+                shape=shape,
+                angle=math.atan2(dy, dx) + random.uniform(-1.0, 1.0),
+                spin=random.uniform(-12, 12),
+                gravity=-0.12 if attack_type in ("fire", "torrent") else 0.0,
+                sprite_key=sprite_key,
+                alpha=175,
+            )
+
+    def spawn_hit_presentation(self, attacker, target, hit_point, direction):
+        character = self.character_for_player(attacker)
+        profile = self.attack_profile_for_player(attacker)
+        attack_type = profile["id"]
+        dx, dy = normalize_vec(*direction)
+        nx, ny = -dy, dx
+        self.spawn_hit_splat(hit_point[0], hit_point[1], character, attack_type, direction=direction, kind=f"hit_{attack_type}")
+        self.fight_splats.append(FightSplat(
+            target.x, target.y + 0.24,
+            character["theme"], character["dark"], character["highlight"],
+            time.time(), max(0.26, profile.get("effectLifetime", 0.38) + 0.08),
+            0.45 * ATTACK_HIT_BURST_SIZE,
+            random.randint(0, 999999),
+            kind=f"reaction_{attack_type}", direction=direction,
+        ))
+        count = self.attack_particle_budget(profile, {
+            "razor": 42,
+            "torrent": 70,
+            "emblem": 34,
+            "chain": 48,
+            "fire": 66,
+            "spiral": 46,
+        }.get(attack_type, 44))
+        for i in range(count):
+            angle = math.atan2(dy, dx) + random.uniform(-1.35, 1.35)
+            if attack_type == "spiral":
+                angle += math.pi * 0.5 * random.choice((-1, 1))
+            speed = random.uniform(0.35, 2.3) * ATTACK_HIT_BURST_SIZE
+            shape = random.choice(("diamond", "streak", "spark"))
+            gravity = 0.0
+            sprite_key = None
+            if attack_type == "razor":
+                shape = random.choice(("slash", "diamond", "streak"))
+            elif attack_type == "torrent":
+                shape = random.choice(("droplet", "steam", "pixel", "streak"))
+                gravity = random.uniform(0.12, 0.40)
+            elif attack_type == "emblem":
+                shape = "image" if i % 2 == 0 else random.choice(("spark", "diamond"))
+                sprite_key = f"{character['id']}:hit" if shape == "image" else None
+                gravity = 0.35
+            elif attack_type == "chain":
+                shape = random.choice(("spark", "streak"))
+            elif attack_type == "fire":
+                shape = random.choice(("ember", "pixel", "steam"))
+                gravity = random.uniform(-0.30, -0.05)
+            elif attack_type == "spiral":
+                shape = random.choice(("streak", "droplet", "diamond"))
+            origin_x = target.x + dx * random.uniform(-0.02, 0.18) + nx * random.uniform(-0.18, 0.18)
+            origin_y = target.y + 0.22 + dy * random.uniform(-0.02, 0.18) + ny * random.uniform(-0.14, 0.14)
+            self.spawn_fight_particle(
+                origin_x, origin_y,
+                math.cos(angle) * speed + dx * 0.45,
+                math.sin(angle) * speed + dy * 0.45,
+                random.choice(self.attack_colors(character)),
+                random.uniform(0.020, 0.090),
+                random.uniform(0.20, profile.get("effectLifetime", 0.42) + 0.18),
+                shape=shape,
+                layer="front",
+                angle=math.atan2(dy, dx) + random.uniform(-1.2, 1.2),
+                spin=random.uniform(-18, 18),
+                gravity=gravity,
+                sprite_key=sprite_key,
+            )
+
+    def spawn_hit_splat(self, x, y, character, attack_type, direction=(0.0, 1.0), kind=None):
+        profile = ATTACK_PROFILES.get(attack_type, ATTACK_PROFILES["razor"])
+        self.fight_splats.append(FightSplat(
+            x, y,
+            character["theme"],
+            character["dark"],
+            character["highlight"],
+            time.time(),
+            max(0.28, profile.get("effectLifetime", 0.36)),
+            (0.36 if attack_type != "spiral" else 0.46) * ATTACK_HIT_BURST_SIZE,
+            random.randint(0, 999999),
+            kind=kind or attack_type,
+            direction=direction,
+        ))
+
+    def spawn_shield_flare(self, player):
+        character = self.character_for_player(player)
+        now = time.time()
+        self.fight_splats.append(FightSplat(
+            player.x, player.y, character["secondary"], character["dark"], character["highlight"],
+            now, 0.34, BUBBLE_RADIUS_M, random.randint(0, 999999), kind="shield"
+        ))
+        for i in range(24):
+            angle = math.tau * i / 24
+            self.spawn_fight_particle(
+                player.x + math.cos(angle) * 0.12,
+                player.y + math.sin(angle) * 0.12,
+                math.cos(angle) * 0.8,
+                math.sin(angle) * 0.8,
+                character["secondary"],
+                0.035,
+                0.34,
+                shape="diamond",
+            )
+
+    def spawn_shield_block_fx(self, player, hit_point, attacker_character=None, profile=None, direction=(0.0, 1.0)):
+        defender = self.character_for_player(player)
+        attacker_character = attacker_character or defender
+        profile = profile or ATTACK_PROFILES["razor"]
+        attack_type = profile["id"]
+        dx, dy = normalize_vec(*direction)
+        nx, ny = -dy, dx
+        x, y = hit_point
+        self.fight_splats.append(FightSplat(
+            x, y, PALETTE["bubble"], defender["dark"], defender["highlight"],
+            time.time(), 0.46, BUBBLE_RADIUS_M * 0.82,
+            random.randint(0, 999999), kind=f"shield_block_{attack_type}", direction=direction,
+        ))
+        self.fight_splats.append(FightSplat(
+            x - dx * 0.06, y - dy * 0.06, attacker_character["theme"], attacker_character["dark"], attacker_character["highlight"],
+            time.time(), 0.34, BUBBLE_RADIUS_M * 0.54,
+            random.randint(0, 999999), kind=f"blocked_attack_{attack_type}", direction=direction,
+        ))
+        for i in range(SHIELD_BLOCK_SPARK_COUNT):
+            angle = math.atan2(-dy, -dx) + random.uniform(-1.35, 1.35)
+            if i % 3 == 0:
+                angle = random.random() * math.tau
+            speed = random.uniform(0.35, 1.9)
+            shape = random.choice(("spark", "diamond", "streak"))
+            if attack_type == "razor":
+                shape = random.choice(("slash", "diamond", "streak"))
+            elif attack_type == "torrent":
+                shape = random.choice(("droplet", "steam", "streak"))
+            elif attack_type == "emblem":
+                shape = "image" if i % 4 == 0 else "spark"
+            elif attack_type == "fire":
+                shape = random.choice(("ember", "pixel", "steam"))
+            elif attack_type == "spiral":
+                angle += math.sin(i) * 0.7
+                shape = random.choice(("streak", "droplet"))
+            sprite_key = f"{attacker_character['id']}:hit" if shape == "image" else None
+            color_pool = (PALETTE["bubble"], defender["highlight"], PALETTE["white"], attacker_character["theme"], attacker_character["accent"])
+            self.spawn_fight_particle(
+                x + nx * random.uniform(-0.06, 0.06),
+                y + ny * random.uniform(-0.06, 0.06),
+                math.cos(angle) * speed + nx * random.uniform(-0.35, 0.35),
+                math.sin(angle) * speed + ny * random.uniform(-0.35, 0.35),
+                random.choice(color_pool),
+                random.uniform(0.018, 0.068),
+                random.uniform(0.18, 0.48),
+                shape=shape,
+                angle=math.atan2(dy, dx) + random.uniform(-1.0, 1.0),
+                spin=random.uniform(-14, 14),
+                gravity=-0.10 if attack_type == "fire" else 0.0,
+                sprite_key=sprite_key,
+            )
+
+    def spawn_round_win_fx(self, winner, loser):
+        character = self.character_for_player(winner)
+        self.fight_splats.append(FightSplat(
+            winner.x, winner.y + 0.4, character["theme"], character["dark"], character["highlight"],
+            time.time(), 1.2, 0.85, random.randint(0, 999999), kind="round_win"
+        ))
+        for _ in range(90):
+            angle = random.random() * math.tau
+            self.spawn_fight_particle(
+                winner.x, winner.y + random.uniform(0.0, 0.55),
+                math.cos(angle) * random.uniform(0.4, 2.2),
+                math.sin(angle) * random.uniform(0.4, 2.2),
+                random.choice((character["theme"], character["secondary"], character["highlight"], character["accent"])),
+                random.uniform(0.025, 0.09),
+                random.uniform(0.38, 1.1),
+                shape=random.choice(("spark", "diamond", "streak", "pixel")),
+            )
+
+    def spawn_countdown_fx(self, color, step):
+        x = 0.0
+        y = (ARENA_MIN_Y + ARENA_MAX_Y) * 0.5
+        for _ in range(38 + step * 10):
+            angle = random.random() * math.tau
+            speed = random.uniform(0.7, 2.8)
+            self.spawn_fight_particle(
+                x + math.cos(angle) * random.uniform(0, 0.28),
+                y + math.sin(angle) * random.uniform(0, 0.20),
+                math.cos(angle) * speed,
+                math.sin(angle) * speed,
+                color,
+                random.uniform(0.025, 0.09),
+                random.uniform(0.18, 0.48),
+                shape=random.choice(("spark", "diamond", "streak")),
+            )
+
     def world_rect(self):
         margin = max(34, self.screen.get_width() // 28)
         hud = max(128, self.screen.get_height() // 6)
@@ -1703,7 +2831,9 @@ class SoupocalypseApp:
         self.draw_arena(offset)
         if self.debug_radar:
             self.draw_radar_debug(offset)
+        self.draw_fight_splats(offset, below=True)
         self.draw_particles(offset, below=True)
+        self.draw_fight_particles(offset, below=True)
         for beam in self.beams:
             self.draw_beam(beam, offset)
         for player in self.players.values():
@@ -1711,9 +2841,15 @@ class SoupocalypseApp:
         for player in sorted(self.players.values(), key=lambda p: p.y, reverse=True):
             self.draw_player(player, offset)
         self.draw_particles(offset, below=False)
+        self.draw_fight_splats(offset, below=False)
+        self.draw_fight_particles(offset, below=False)
         self.draw_hud()
         self.draw_messages()
+        self.draw_round_presentation()
+        self.draw_round_countdown_overlay()
+        self.draw_match_win_screen()
         self.draw_magcal_overlay()
+        self.draw_screen_flashes()
         self.draw_impact_frames()
         pygame.display.flip()
 
@@ -1732,6 +2868,17 @@ class SoupocalypseApp:
             for i in range(0, size[0] + size[1], 82):
                 pygame.draw.line(self.bg_cache, (36, 24, 19), (i, 0), (i - size[1], size[1]), 1)
         self.screen.blit(self.bg_cache, (0, 0))
+        now = time.time()
+        w, h = size
+        for i in range(24):
+            x = (i * 143 + now * 42) % (w + 180) - 90
+            y = (i * 71 + now * 22) % (h + 120) - 60
+            color = rgba(PALETTE["soup_deep"] if i % 4 == 0 else PALETTE["light_brown"], 18 + (i % 3) * 9)
+            self.draw_slanted_strip(x, y, 90 + (i % 5) * 28, 4 + (i % 3) * 3, -0.42, color)
+        p1 = self.players[101].color if 101 in self.players else PALETTE["p1"]
+        p2 = self.players[102].color if 102 in self.players else PALETTE["p2"]
+        self.draw_halftone_field((72, h - 86), 150, p1, 0.28, now)
+        self.draw_halftone_field((w - 72, 110), 150, p2, 0.28, now + 0.9)
 
     def draw_text_center(self, font, text, color, center, shadow=True):
         rendered = font.render(text, True, color)
@@ -2290,6 +3437,10 @@ class SoupocalypseApp:
         pygame.draw.rect(self.screen, (25, 18, 15), inner, border_radius=16)
         pygame.draw.rect(self.screen, PALETTE["dark_brown"], rect, 5, border_radius=22)
         pygame.draw.rect(self.screen, PALETTE["light_brown"], inner, 1, border_radius=16)
+        pulse = clamp((self.arena_pulse_until - time.time()) / 0.34, 0.0, 1.0)
+        if pulse > 0.0:
+            pulse_color = self.players.get(self.round_winner_id, self.players[101]).color if self.round_winner_id else PALETTE["soup"]
+            pygame.draw.rect(self.screen, rgba(pulse_color, 180 * pulse), rect.inflate(int(18 * pulse), int(18 * pulse)), max(2, int(5 * pulse)), border_radius=24)
 
         for i in range(7):
             x = ARENA_MIN_X + (ARENA_MAX_X - ARENA_MIN_X) * i / 6
@@ -2353,6 +3504,321 @@ class SoupocalypseApp:
             pygame.draw.circle(surf, rgba(particle.color, alpha), (sx, sy), radius)
         self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
 
+    def draw_fight_splats(self, offset, below):
+        now = time.time()
+        for splat in self.fight_splats:
+            back_layer = splat.kind in ("round_win", "shield") or splat.kind.startswith("startup_")
+            if below != back_layer:
+                continue
+            age = now - splat.created_at
+            frac = clamp(1.0 - age / max(0.001, splat.life), 0.0, 1.0)
+            sx, sy = self.world_to_screen(splat.x, splat.y, offset)
+            attack_type = self.attack_type_from_splat(splat.kind)
+            if splat.kind == "shield" or splat.kind.startswith("shield_block"):
+                self.draw_shield_splat((sx, sy), splat, frac)
+            elif splat.kind.startswith("blocked_attack_"):
+                self.draw_attack_hit_splat((sx, sy), splat, frac, attack_type, blocked=True)
+            elif splat.kind.startswith("reaction_"):
+                self.draw_victim_reaction_splat((sx, sy), splat, frac, attack_type)
+            elif splat.kind.startswith("hit_") or splat.kind.startswith("contact_"):
+                self.draw_attack_hit_splat((sx, sy), splat, frac, attack_type)
+            elif splat.kind.startswith("miss_"):
+                self.draw_miss_splat((sx, sy), splat, frac, attack_type)
+            elif splat.kind.startswith("muzzle_"):
+                self.draw_muzzle_splat((sx, sy), splat, frac, attack_type)
+            elif splat.kind.startswith("startup_"):
+                self.draw_startup_splat((sx, sy), splat, frac, attack_type)
+            elif splat.kind == "spiral":
+                self.draw_spiral_splat((sx, sy), splat, frac)
+            else:
+                self.draw_jagged_splash((sx, sy), self.meters_to_px(splat.radius) * (1.0 + 0.25 * (1 - frac)), splat.color, splat.seed, alpha=105 * frac, stretch=(1.25, 0.78))
+                self.draw_starburst((sx, sy), self.meters_to_px(splat.radius) * 0.65, splat.highlight, 90 * frac, seed=splat.seed + 8)
+
+    def attack_type_from_splat(self, kind):
+        for attack_type in ATTACK_PROFILES:
+            if kind == attack_type or kind.endswith(f"_{attack_type}"):
+                return attack_type
+        return "razor"
+
+    def screen_direction(self, direction):
+        dx, dy = normalize_vec(*direction)
+        return normalize_vec(dx, -dy)
+
+    def draw_shield_splat(self, center, splat, frac):
+        attack_type = self.attack_type_from_splat(splat.kind)
+        radius = self.meters_to_px(splat.radius) * (0.85 + 0.22 * (1 - frac))
+        contact_dx, contact_dy = self.screen_direction(splat.direction)
+        dent = 1.0 + (0.18 if splat.kind.startswith("shield_block") else 0.0)
+        for i in range(8):
+            angle = i * math.tau / 8 + time.time() * 2.8
+            pulse = 1.0 + (0.12 * math.cos(angle - math.atan2(contact_dy, contact_dx)) if splat.kind.startswith("shield_block") else 0.0)
+            p1 = (center[0] + math.cos(angle) * radius * 0.72 * pulse, center[1] + math.sin(angle) * radius * 0.72 * pulse)
+            p2 = (center[0] + math.cos(angle + 0.36) * radius * dent, center[1] + math.sin(angle + 0.36) * radius * dent)
+            pygame.draw.line(self.screen, rgba(splat.highlight, 125 * frac), p1, p2, max(2, int(5 * frac)))
+        pygame.draw.circle(self.screen, rgba(splat.color, 55 * frac), center, int(radius))
+        self.draw_broken_ring(center, splat.highlight, int(radius), frac, splat.seed, direction=splat.direction, attack_type="shield")
+        if splat.kind.startswith("shield_block"):
+            for i in range(5):
+                offset = (i - 2) * radius * 0.12
+                p1 = (center[0] - contact_dx * radius * 0.18 - contact_dy * offset, center[1] - contact_dy * radius * 0.18 + contact_dx * offset)
+                p2 = (center[0] - contact_dx * radius * 0.82 - contact_dy * offset * 0.55, center[1] - contact_dy * radius * 0.82 + contact_dx * offset * 0.55)
+                color = splat.highlight if attack_type in ("chain", "emblem") else splat.color
+                pygame.draw.line(self.screen, rgba(color, 150 * frac), p1, p2, max(2, int(3 * frac)))
+
+    def draw_spiral_splat(self, center, splat, frac):
+        points = []
+        radius = self.meters_to_px(splat.radius)
+        phase = time.time() * 8
+        for i in range(46):
+            t = i / 45
+            angle = t * math.tau * 2.5 + phase
+            r = radius * t * (0.4 + 0.8 * frac)
+            points.append((center[0] + math.cos(angle) * r, center[1] + math.sin(angle) * r * 0.72))
+        if len(points) > 2:
+            pygame.draw.lines(self.screen, rgba(splat.dark_color, 130 * frac), False, points, 9)
+            pygame.draw.lines(self.screen, rgba(splat.color, 220 * frac), False, points, 5)
+            pygame.draw.lines(self.screen, rgba(splat.highlight, 190 * frac), False, points, 2)
+
+    def draw_startup_splat(self, center, splat, frac, attack_type):
+        radius = self.meters_to_px(splat.radius) * (0.55 + 0.45 * (1 - frac))
+        dx, dy = self.screen_direction(splat.direction)
+        nx, ny = -dy, dx
+        if attack_type == "razor":
+            for i in range(3):
+                side = (i - 1) * radius * 0.22
+                p1 = (center[0] - dx * radius * 0.55 + nx * side, center[1] - dy * radius * 0.55 + ny * side)
+                p2 = (center[0] + dx * radius * 0.72 + nx * side * 0.35, center[1] + dy * radius * 0.72 + ny * side * 0.35)
+                pygame.draw.line(self.screen, rgba(splat.dark_color, 115 * frac), p1, p2, max(2, int(7 * frac)))
+                pygame.draw.line(self.screen, rgba(splat.highlight, 125 * frac), p1, p2, max(1, int(2 * frac)))
+        elif attack_type == "emblem":
+            self.draw_starburst(center, radius * 0.70, splat.color, 80 * frac, seed=splat.seed)
+            self.draw_broken_ring(center, splat.highlight, int(radius * 0.92), frac, splat.seed + 3, attack_type="emblem")
+        elif attack_type == "spiral":
+            self.draw_spiral_splat(center, splat, frac)
+        else:
+            self.draw_broken_ring(center, splat.highlight, int(radius), frac, splat.seed, direction=splat.direction, attack_type=attack_type)
+
+    def draw_muzzle_splat(self, center, splat, frac, attack_type):
+        radius = self.meters_to_px(splat.radius) * (0.65 + 0.75 * (1 - frac))
+        dx, dy = self.screen_direction(splat.direction)
+        nx, ny = -dy, dx
+        if attack_type == "razor":
+            for i, color in enumerate((splat.dark_color, splat.color, splat.highlight)):
+                width = max(2, int((13 - i * 4) * frac))
+                offset = (i - 1) * radius * 0.18
+                p1 = (center[0] - dx * radius * 0.22 + nx * offset, center[1] - dy * radius * 0.22 + ny * offset)
+                p2 = (center[0] + dx * radius * 1.25 + nx * offset * 0.45, center[1] + dy * radius * 1.25 + ny * offset * 0.45)
+                pygame.draw.line(self.screen, rgba(color, 205 * frac), p1, p2, width)
+        elif attack_type == "torrent":
+            self.draw_jagged_splash(center, radius, splat.highlight, splat.seed, alpha=95 * frac, stretch=(1.20, 0.86))
+            self.draw_broken_ring(center, splat.color, int(radius * 1.15), frac, splat.seed, attack_type="torrent")
+        elif attack_type == "emblem":
+            self.draw_starburst(center, radius, splat.color, 125 * frac, seed=splat.seed)
+            self.draw_broken_ring(center, splat.highlight, int(radius * 0.78), frac, splat.seed, attack_type="emblem")
+        elif attack_type == "chain":
+            for i in range(10):
+                angle = i * math.tau / 10 + random.Random(splat.seed + i).uniform(-0.2, 0.2)
+                p1 = (center[0] + math.cos(angle) * radius * 0.25, center[1] + math.sin(angle) * radius * 0.25)
+                p2 = (center[0] + math.cos(angle) * radius * 1.20, center[1] + math.sin(angle) * radius * 1.20)
+                pygame.draw.line(self.screen, rgba(splat.highlight, 150 * frac), p1, p2, max(1, int(3 * frac)))
+        elif attack_type == "fire":
+            self.draw_blocky_burst(center, radius, splat, frac, count=14)
+        elif attack_type == "spiral":
+            self.draw_spiral_splat(center, splat, frac)
+
+    def draw_attack_hit_splat(self, center, splat, frac, attack_type, blocked=False):
+        radius = self.meters_to_px(splat.radius) * (0.75 + 0.55 * (1 - frac))
+        dx, dy = self.screen_direction(splat.direction)
+        nx, ny = -dy, dx
+        alpha = 145 * frac if not blocked else 105 * frac
+        if attack_type == "razor":
+            for i in range(3):
+                angle = math.atan2(dy, dx) + (i - 1) * 0.36
+                ux, uy = math.cos(angle), math.sin(angle)
+                px, py = -uy, ux
+                length = radius * (1.25 - i * 0.12)
+                width = max(3, int((12 - i * 3) * frac))
+                p1 = (center[0] - ux * length * 0.55 + px * radius * 0.10, center[1] - uy * length * 0.55 + py * radius * 0.10)
+                p2 = (center[0] + ux * length * 0.70 - px * radius * 0.06, center[1] + uy * length * 0.70 - py * radius * 0.06)
+                pygame.draw.line(self.screen, rgba(splat.dark_color, alpha), p1, p2, width + 5)
+                pygame.draw.line(self.screen, rgba(splat.highlight if i == 1 else splat.color, 210 * frac), p1, p2, width)
+            self.draw_broken_ring(center, splat.highlight, int(radius * 0.72), frac, splat.seed, direction=splat.direction, attack_type=attack_type)
+        elif attack_type == "torrent":
+            self.draw_jagged_splash(center, radius, splat.color, splat.seed, alpha=alpha, stretch=(1.45, 0.82))
+            for i in range(9):
+                t = i / 8
+                p1 = (center[0] - dx * radius * 0.25 + nx * (t - 0.5) * radius * 1.35, center[1] - dy * radius * 0.25 + ny * (t - 0.5) * radius * 1.35)
+                p2 = (p1[0] + dx * radius * 0.45, p1[1] + dy * radius * 0.45)
+                pygame.draw.line(self.screen, rgba(splat.highlight, 80 * frac), p1, p2, max(1, int(3 * frac)))
+            self.draw_broken_ring(center, splat.highlight, int(radius * 0.80), frac, splat.seed, direction=splat.direction, attack_type=attack_type)
+        elif attack_type == "emblem":
+            self.draw_starburst(center, radius * 0.82, splat.color, alpha, seed=splat.seed)
+            for i in range(5):
+                angle = i * math.tau / 5 + time.time() * 2.8
+                c = (center[0] + math.cos(angle) * radius * 0.52, center[1] + math.sin(angle) * radius * 0.38)
+                self.draw_starburst(c, radius * 0.24, splat.highlight, 120 * frac, seed=splat.seed + i)
+            self.draw_broken_ring(center, splat.highlight, int(radius * 0.70), frac, splat.seed, attack_type=attack_type)
+        elif attack_type == "chain":
+            rng = random.Random(splat.seed + int(time.time() * LIGHTNING_REDRAW_RATE))
+            for _ in range(13):
+                p1 = (center[0] + rng.uniform(-radius, radius), center[1] + rng.uniform(-radius * 0.70, radius * 0.70))
+                p2 = (p1[0] + rng.uniform(-radius * 0.45, radius * 0.45), p1[1] + rng.uniform(-radius * 0.45, radius * 0.45))
+                pygame.draw.line(self.screen, rgba(splat.color, 150 * frac), p1, p2, max(2, int(4 * frac)))
+                pygame.draw.line(self.screen, rgba(PALETTE["white"], 190 * frac), p1, p2, max(1, int(2 * frac)))
+            self.draw_broken_ring(center, splat.highlight, int(radius * 0.72), frac, splat.seed, attack_type=attack_type)
+        elif attack_type == "fire":
+            self.draw_blocky_burst(center, radius, splat, frac, count=22)
+            self.draw_broken_ring(center, splat.highlight, int(radius * 0.76), frac, splat.seed, direction=splat.direction, attack_type=attack_type)
+        elif attack_type == "spiral":
+            self.draw_spiral_splat(center, splat, frac)
+            for i in range(3):
+                arc_radius = radius * (0.48 + i * 0.22)
+                rect = pygame.Rect(0, 0, arc_radius * 2, arc_radius * 2)
+                rect.center = center
+                pygame.draw.arc(self.screen, rgba(splat.highlight, 150 * frac), rect, time.time() * 4 + i, time.time() * 4 + i + 2.7, max(2, int(5 * frac)))
+
+    def draw_victim_reaction_splat(self, center, splat, frac, attack_type):
+        radius = self.meters_to_px(splat.radius) * (0.90 + 0.14 * math.sin(time.time() * 18))
+        dx, dy = self.screen_direction(splat.direction)
+        nx, ny = -dy, dx
+        if attack_type == "razor":
+            for i in range(4):
+                offset = (i - 1.5) * radius * 0.19
+                p1 = (center[0] - dx * radius * 0.62 + nx * offset, center[1] - dy * radius * 0.62 + ny * offset)
+                p2 = (center[0] + dx * radius * 0.46 + nx * offset * 0.35, center[1] + dy * radius * 0.46 + ny * offset * 0.35)
+                pygame.draw.line(self.screen, rgba(splat.dark_color, 115 * frac), p1, p2, max(2, int(7 * frac)))
+                pygame.draw.line(self.screen, rgba(splat.highlight, 150 * frac), p1, p2, max(1, int(2 * frac)))
+        elif attack_type == "torrent":
+            self.draw_jagged_splash(center, radius * 0.72, splat.color, splat.seed, alpha=70 * frac, stretch=(1.25, 0.95))
+            for i in range(7):
+                x = center[0] + (i - 3) * radius * 0.17
+                y1 = center[1] + radius * 0.05
+                y2 = y1 + radius * (0.28 + (i % 3) * 0.08) * (1.0 - frac * 0.25)
+                pygame.draw.line(self.screen, rgba(splat.highlight, 80 * frac), (x, y1), (x + math.sin(time.time() * 8 + i) * 8, y2), 3)
+        elif attack_type == "emblem":
+            for i in range(6):
+                angle = i * math.tau / 6 + time.time() * 2.2
+                c = (center[0] + math.cos(angle) * radius * 0.50, center[1] + math.sin(angle) * radius * 0.36)
+                self.draw_starburst(c, radius * (0.13 + 0.04 * (i % 2)), splat.highlight, 115 * frac, seed=splat.seed + i)
+        elif attack_type == "chain":
+            for i in range(7):
+                angle = i * math.tau / 7 + time.time() * 5.0
+                p1 = (center[0] + math.cos(angle) * radius * 0.30, center[1] + math.sin(angle) * radius * 0.58)
+                p2 = (center[0] + math.cos(angle + 0.36) * radius * 0.62, center[1] + math.sin(angle + 0.36) * radius * 0.72)
+                pygame.draw.line(self.screen, rgba(splat.highlight, 135 * frac), p1, p2, max(1, int(3 * frac)))
+        elif attack_type == "fire":
+            self.draw_blocky_burst(center, radius * 0.78, splat, frac, count=16)
+            pygame.draw.circle(self.screen, rgba(splat.highlight, 72 * frac), center, int(radius * 0.62), max(1, int(4 * frac)))
+        elif attack_type == "spiral":
+            self.draw_spiral_splat(center, splat, frac)
+
+    def draw_miss_splat(self, center, splat, frac, attack_type):
+        radius = self.meters_to_px(splat.radius) * (0.65 + 0.45 * (1 - frac))
+        if attack_type == "fire":
+            self.draw_blocky_burst(center, radius, splat, frac * 0.75, count=10)
+        elif attack_type == "spiral":
+            self.draw_spiral_splat(center, splat, frac * 0.75)
+        elif attack_type == "emblem":
+            self.draw_starburst(center, radius * 0.72, splat.color, 75 * frac, seed=splat.seed)
+        else:
+            self.draw_broken_ring(center, splat.highlight, int(radius), frac * 0.75, splat.seed, direction=splat.direction, attack_type=attack_type)
+
+    def draw_blocky_burst(self, center, radius, splat, frac, count=18):
+        rng = random.Random(splat.seed)
+        colors = (splat.dark_color, splat.color, splat.highlight, PALETTE["white"])
+        for _ in range(count):
+            angle = rng.random() * math.tau
+            dist = radius * rng.uniform(0.12, 1.05) * (1.05 - frac * 0.20)
+            size = max(3, int(radius * rng.uniform(0.045, 0.14) * (0.65 + frac)))
+            rect = pygame.Rect(0, 0, size, size)
+            rect.center = (center[0] + math.cos(angle) * dist, center[1] + math.sin(angle) * dist * 0.78)
+            pygame.draw.rect(self.screen, rgba(rng.choice(colors), 130 * frac), rect)
+
+    def draw_fight_particles(self, offset, below):
+        now = time.time()
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        for particle in self.fight_particles:
+            if below != (particle.layer == "back"):
+                continue
+            age = now - particle.created_at
+            frac = clamp(1.0 - age / max(0.001, particle.life), 0.0, 1.0)
+            if frac <= 0:
+                continue
+            sx, sy = self.world_to_screen(particle.x, particle.y, offset)
+            alpha = channel(particle.alpha * frac)
+            size = max(2, int(self.meters_to_px(particle.size) * (0.65 + frac)))
+            if particle.shape == "image" and particle.sprite_key:
+                self.draw_fight_icon_particle(particle, (sx, sy), frac)
+                continue
+            if particle.shape in ("pixel", "ember"):
+                rect = pygame.Rect(0, 0, size, size)
+                rect.center = (sx, sy)
+                pygame.draw.rect(surf, rgba(particle.color, alpha), rect)
+                if particle.shape == "ember":
+                    inner = rect.inflate(-max(1, size // 3), -max(1, size // 3))
+                    pygame.draw.rect(surf, rgba(PALETTE["white"], 105 * frac), inner)
+            elif particle.shape in ("spark", "diamond", "droplet"):
+                points = [(sx, sy - size), (sx + size, sy), (sx, sy + size), (sx - size, sy)]
+                if particle.shape == "droplet":
+                    points = [(sx, sy - size * 1.4), (sx + size * 0.75, sy), (sx, sy + size * 1.2), (sx - size * 0.75, sy)]
+                pygame.draw.polygon(surf, rgba(particle.color, alpha), points)
+            elif particle.shape in ("slash", "streak"):
+                length = size * (4.0 if particle.shape == "slash" else 3.0)
+                ux = math.cos(particle.angle)
+                uy = math.sin(particle.angle)
+                px = -uy
+                py = ux
+                width = max(2, size * 0.42)
+                points = [
+                    (sx - ux * length + px * width, sy - uy * length + py * width),
+                    (sx + ux * length + px * width * 0.28, sy + uy * length + py * width * 0.28),
+                    (sx + ux * length - px * width, sy + uy * length - py * width),
+                    (sx - ux * length - px * width * 0.28, sy - uy * length - py * width * 0.28),
+                ]
+                pygame.draw.polygon(surf, rgba(particle.color, alpha), points)
+            elif particle.shape == "steam":
+                pygame.draw.arc(surf, rgba(particle.color, alpha * 0.55), (sx - size, sy - size, size * 2, size * 2), particle.angle, particle.angle + 1.7, max(1, size // 3))
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_fight_icon_particle(self, particle, center, frac):
+        character_id, kind = particle.sprite_key.split(":", 1)
+        character = self.character_by_id(character_id)
+        icon = self.generated_icon_surface(character, kind)
+        scale = max(0.12, particle.size * 5.8 * (0.65 + frac))
+        img = pygame.transform.rotozoom(icon, math.degrees(particle.angle), scale)
+        img.set_alpha(channel(230 * frac))
+        self.screen.blit(img, img.get_rect(center=center))
+
+    def generated_icon_surface(self, character, kind):
+        key = (character["id"], kind)
+        if key in self.icon_cache:
+            return self.icon_cache[key]
+        surf = pygame.Surface((GENERATED_ICON_SIZE, GENERATED_ICON_SIZE), pygame.SRCALPHA)
+        scale = GENERATED_ICON_SIZE / 64.0
+        theme = character["theme"]
+        dark = character["dark"]
+        highlight = character["highlight"]
+        accent = character["accent"]
+        def s(point):
+            return (int(point[0] * scale), int(point[1] * scale))
+        pygame.draw.polygon(surf, dark, [s(p) for p in [(32, 4), (52, 14), (58, 38), (43, 58), (19, 58), (6, 37), (12, 13)]])
+        if kind == "hit":
+            pygame.draw.polygon(surf, theme, [s(p) for p in [(11, 33), (26, 18), (37, 25), (52, 12), (43, 34), (54, 50), (32, 43), (14, 55)]])
+            pygame.draw.line(surf, highlight, s((16, 18)), s((50, 52)), max(1, int(5 * scale)))
+            pygame.draw.line(surf, accent, s((47, 16)), s((18, 50)), max(1, int(4 * scale)))
+        else:
+            points = []
+            for i in range(16):
+                angle = i * math.tau / 16
+                radius = 25 if i % 2 == 0 else 13
+                points.append(s((32 + math.cos(angle) * radius, 32 + math.sin(angle) * radius)))
+            pygame.draw.polygon(surf, theme, points)
+            pygame.draw.circle(surf, accent, s((32, 32)), max(1, int(13 * scale)))
+            pygame.draw.arc(surf, highlight, pygame.Rect(int(14 * scale), int(14 * scale), int(36 * scale), int(36 * scale)), 0.4, 5.6, max(1, int(4 * scale)))
+        pygame.draw.rect(surf, highlight, pygame.Rect(int(30 * scale), int(9 * scale), max(1, int(5 * scale)), int(46 * scale)))
+        self.icon_cache[key] = surf
+        return surf
+
     def draw_beam(self, beam, offset):
         now = time.time()
         age = now - beam.created_at
@@ -2360,26 +3826,294 @@ class SoupocalypseApp:
         start = self.world_to_screen(*beam.start, offset)
         end_point = beam.hit_point if beam.hit_point else beam.end
         end = self.world_to_screen(*end_point, offset)
+        player = self.players.get(beam.attacker_id) if beam.attacker_id else None
+        character = self.character_for_player(player) if player else {
+            "theme": beam.color, "secondary": beam.color, "dark": PALETTE["dark_brown"],
+            "highlight": PALETTE["white"], "accent": PALETTE["soup"], "id": "fallback",
+        }
+        profile = ATTACK_PROFILES.get(beam.attack_type, ATTACK_PROFILES["razor"])
+        shape = profile["beam_shape"]
+        if shape == "jagged_ribbon":
+            self.draw_razor_beam(start, end, character, beam, frac)
+        elif shape == "particle_tunnel":
+            self.draw_torrent_beam(start, end, character, beam, frac)
+        elif shape == "emblem_path":
+            self.draw_emblem_beam(start, end, character, beam, frac)
+        elif shape == "lightning_chain":
+            self.draw_chain_beam(start, end, character, beam, frac)
+        elif shape == "pixel_fire":
+            self.draw_pixel_fire_beam(start, end, character, beam, frac)
+        elif shape == "spiral_ribbon":
+            self.draw_spiral_beam(start, end, character, beam, frac)
+        else:
+            self.draw_simple_beam(start, end, beam.color, frac)
+        if beam.hit_point:
+            self.draw_broken_ring(end, character["highlight"], 24 + int(14 * frac), frac, seed=int(beam.created_at * 1000), direction=beam.direction, attack_type=beam.attack_type)
+
+    def beam_basis(self, start, end):
+        sx, sy = start
+        ex, ey = end
+        vx = ex - sx
+        vy = ey - sy
+        length = max(1.0, math.hypot(vx, vy))
+        dx = vx / length
+        dy = vy / length
+        return dx, dy, -dy, dx, length
+
+    def draw_simple_beam(self, start, end, color, frac):
         glow = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
         for width, alpha in ((34, 34), (22, 58), (12, 96)):
-            pygame.draw.line(glow, rgba(beam.color, alpha * frac), start, end, width)
+            pygame.draw.line(glow, rgba(color, alpha * frac), start, end, width)
         pygame.draw.line(glow, rgba(PALETTE["white"], 240 * frac), start, end, max(2, int(6 * frac)))
         self.screen.blit(glow, (0, 0), special_flags=pygame.BLEND_ADD)
         pygame.draw.circle(self.screen, PALETTE["white"], start, max(3, int(10 * frac)))
-        if beam.hit_point:
-            pygame.draw.circle(self.screen, PALETTE["white"], end, max(4, int(16 * frac)), 2)
+
+    def draw_razor_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        rng = random.Random(int(beam.created_at * 1000) + int((1 - frac) * 18))
+        steps = 9
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        ribbon_layers = (
+            (character["dark"], 30, 155, -0.05, 1.0),
+            (character["theme"], 18, 210, 0.04, 0.72),
+            (PALETTE["white"], 7, 235, 0.00, 0.32),
+        )
+        for color, base_width, alpha, phase, jitter_scale in ribbon_layers:
+            left = []
+            right = []
+            for i in range(steps + 1):
+                t = i / steps
+                cx = start[0] + dx * length * t + nx * math.sin((t + phase) * math.tau * 2.0) * 4 * frac
+                cy = start[1] + dy * length * t + ny * math.sin((t + phase) * math.tau * 2.0) * 4 * frac
+                width = (base_width + base_width * 0.36 * math.sin(t * math.pi)) * frac
+                jitter = rng.uniform(-13, 13) * jitter_scale * (0.35 + 0.65 * frac)
+                left.append((cx + nx * (width + jitter), cy + ny * (width + jitter)))
+                right.append((cx - nx * (width - jitter), cy - ny * (width - jitter)))
+            pygame.draw.polygon(surf, rgba(color, alpha * frac), left + right[::-1])
+        pygame.draw.line(surf, rgba(PALETTE["white"], 245 * frac), start, end, max(2, int(5 * frac)))
+        for i in range(5):
+            t = 0.12 + i * 0.16 + rng.uniform(-0.03, 0.03)
+            if t > 0.92:
+                continue
+            side = rng.choice((-1, 1))
+            cut_start = (
+                start[0] + dx * length * (t - 0.06) + nx * side * rng.uniform(18, 46),
+                start[1] + dy * length * (t - 0.06) + ny * side * rng.uniform(18, 46),
+            )
+            cut_end = (cut_start[0] + dx * rng.uniform(46, 95), cut_start[1] + dy * rng.uniform(46, 95))
+            pygame.draw.line(surf, rgba(character["highlight"], 105 * frac), cut_start, cut_end, max(1, int(3 * frac)))
+        for i in range(8):
+            t = rng.random() * 0.82
+            p1 = (start[0] + dx * length * t - dx * 32 + nx * rng.uniform(-46, 46), start[1] + dy * length * t - dy * 32 + ny * rng.uniform(-46, 46))
+            p2 = (p1[0] - dx * rng.uniform(18, 52), p1[1] - dy * rng.uniform(18, 52))
+            pygame.draw.line(surf, rgba(character["dark"], 70 * frac), p1, p2, 2)
+        for i in range(12):
+            t = rng.random()
+            cx = start[0] + dx * length * t
+            cy = start[1] + dy * length * t
+            shard_len = rng.uniform(14, 44) * frac
+            side = rng.choice((-1, 1))
+            p1 = (cx + nx * side * rng.uniform(10, 28), cy + ny * side * rng.uniform(10, 28))
+            p2 = (p1[0] + dx * shard_len + nx * side * 7, p1[1] + dy * shard_len + ny * side * 7)
+            pygame.draw.line(surf, rgba(character["highlight"], 170 * frac), p1, p2, max(2, int(4 * frac)))
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+        self.draw_slash_head(end, dx, dy, character["highlight"], frac)
+
+    def draw_torrent_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        rng = random.Random(int(beam.created_at * 1000) + int((1 - frac) * 14))
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        colors = (character["dark"], character["theme"], character["secondary"], character["highlight"])
+        phase = (time.time() - beam.created_at) * 8.0
+        for i in range(94):
+            t = rng.random()
+            band = 0.72 + 0.48 * max(0.0, math.sin((t * 3.0 - phase) * math.tau))
+            spread = (8 + t * 42) * band
+            cx = start[0] + dx * length * t + nx * rng.uniform(-spread, spread)
+            cy = start[1] + dy * length * t + ny * rng.uniform(-spread, spread)
+            size = int(rng.uniform(3, 13) * (0.55 + frac))
+            rect = pygame.Rect(0, 0, size, size)
+            rect.center = (cx, cy)
+            pygame.draw.rect(surf, rgba(rng.choice(colors), 170 * frac), rect)
+        for i in range(6):
+            t = (i + ((time.time() - beam.created_at) * 2.2 % 1.0)) / 6
+            if t > 1:
+                t -= 1
+            cx = start[0] + dx * length * t
+            cy = start[1] + dy * length * t
+            width = 36 + 34 * t
+            pygame.draw.line(surf, rgba(character["highlight"], 82 * frac), (cx - nx * width, cy - ny * width), (cx + nx * width, cy + ny * width), 3)
+            arc_rect = pygame.Rect(0, 0, width * 1.55, width * 0.70)
+            arc_rect.center = (cx, cy)
+            pygame.draw.arc(surf, rgba(PALETTE["white"], 45 * frac), arc_rect, -0.4, math.pi + 0.4, 2)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_emblem_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        pygame.draw.line(surf, rgba(character["theme"], 70 * frac), start, end, 18)
+        for i in range(9):
+            t = i / 8
+            p = (start[0] + dx * length * t, start[1] + dy * length * t)
+            self.draw_pixel_diamond(p[0], p[1], 4 + (i % 3) * 2, rgba(character["accent"], 90 * frac))
+        pygame.draw.line(surf, rgba(character["highlight"], 170 * frac), start, end, 4)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+        icon = self.generated_icon_surface(character, "attack")
+        for i in range(9):
+            t = (i + ((time.time() - beam.created_at) * 8.0 % 1.0)) / 9
+            if t > 1:
+                t -= 1
+            cx = start[0] + dx * length * t + nx * math.sin(t * math.tau * 2) * 16
+            cy = start[1] + dy * length * t + ny * math.sin(t * math.tau * 2) * 16
+            scale = 0.38 + 0.24 * math.sin(t * math.pi)
+            angle = (time.time() * EMBLEM_SPIN_SPEED + i * 47) % 360
+            ghost = pygame.transform.rotozoom(icon, angle - 18, scale * 1.06)
+            ghost.set_alpha(channel(64 * frac))
+            self.screen.blit(ghost, ghost.get_rect(center=(cx - dx * 10, cy - dy * 10)))
+            img = pygame.transform.rotozoom(icon, angle, scale)
+            img.set_alpha(channel(210 * frac))
+            self.screen.blit(img, img.get_rect(center=(cx, cy)))
+
+    def draw_chain_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        rng = random.Random(int(beam.created_at * 2000) + int(time.time() * LIGHTNING_REDRAW_RATE))
+        points = [start]
+        for i in range(1, 12):
+            t = i / 12
+            jitter = rng.uniform(-34, 34) * (0.4 + 0.6 * frac)
+            points.append((start[0] + dx * length * t + nx * jitter, start[1] + dy * length * t + ny * jitter))
+        points.append(end)
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        pygame.draw.lines(surf, rgba(character["theme"], 125 * frac), False, points, 16)
+        pygame.draw.lines(surf, rgba(character["highlight"], 230 * frac), False, points, 5)
+        pygame.draw.lines(surf, rgba(PALETTE["white"], 245 * frac), False, points, 2)
+        for point in points[2:-2:2]:
+            branch_angle = math.atan2(dy, dx) + rng.choice((-1, 1)) * rng.uniform(0.8, 1.5)
+            branch_len = rng.uniform(26, 74) * frac
+            end_b = (point[0] + math.cos(branch_angle) * branch_len, point[1] + math.sin(branch_angle) * branch_len)
+            pygame.draw.line(surf, rgba(character["secondary"], 155 * frac), point, end_b, 3)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_pixel_fire_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        rng = random.Random(int(beam.created_at * 1000) + int(time.time() * FIRE_FLICKER_RATE))
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        colors = (character["dark"], character["theme"], character["accent"], character["highlight"], PALETTE["white"])
+        for i in range(110):
+            t = rng.random()
+            heat = math.sin(t * math.pi)
+            spread = 14 + heat * 34
+            cx = start[0] + dx * length * t + nx * rng.uniform(-spread, spread)
+            cy = start[1] + dy * length * t + ny * rng.uniform(-spread, spread) - rng.uniform(0, 24) * heat
+            size = int(rng.uniform(4, 16) * (0.6 + heat * 0.7) * frac)
+            rect = pygame.Rect(0, 0, max(2, size), max(2, size))
+            rect.center = (cx, cy)
+            pygame.draw.rect(surf, rgba(rng.choice(colors), 165 * frac), rect)
+        for i in range(6):
+            t = i / 5
+            base = (start[0] + dx * length * t, start[1] + dy * length * t)
+            tongue = [
+                (base[0] - dx * 14 + nx * 18, base[1] - dy * 14 + ny * 18),
+                (base[0] + dx * 28, base[1] + dy * 28 - 24 * math.sin(t * math.pi)),
+                (base[0] - dx * 14 - nx * 18, base[1] - dy * 14 - ny * 18),
+            ]
+            pygame.draw.polygon(surf, rgba(character["highlight"], 42 * frac), tongue)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_spiral_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        phase = (time.time() - beam.created_at) * 18.0
+        for strand, color, width in ((0.0, character["theme"], 8), (math.pi * 0.72, character["secondary"], 7), (math.pi * 1.36, character["highlight"], 4)):
+            points = []
+            for i in range(28):
+                t = i / 27
+                amp = (26 + 5 * (width == 4)) * math.sin(t * math.pi) * frac
+                wave = math.sin(t * math.tau * 3.2 + phase + strand) * amp
+                points.append((start[0] + dx * length * t + nx * wave, start[1] + dy * length * t + ny * wave))
+            pygame.draw.lines(surf, rgba(character["dark"], 110 * frac), False, points, width + 6)
+            pygame.draw.lines(surf, rgba(color, 215 * frac), False, points, width)
+            pygame.draw.lines(surf, rgba(character["highlight"], 175 * frac), False, points, 2)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_slash_head(self, end, dx, dy, color, frac):
+        nx, ny = -dy, dx
+        length = 42 * frac
+        width = 18 * frac
+        points = [
+            (end[0] + dx * length, end[1] + dy * length),
+            (end[0] - dx * length * 0.25 + nx * width, end[1] - dy * length * 0.25 + ny * width),
+            (end[0] - dx * length * 0.55, end[1] - dy * length * 0.55),
+            (end[0] - dx * length * 0.25 - nx * width, end[1] - dy * length * 0.25 - ny * width),
+        ]
+        pygame.draw.polygon(self.screen, rgba(color, 220 * frac), points)
+
+    def draw_broken_ring(self, center, color, radius, frac, seed, direction=None, attack_type="generic"):
+        rng = random.Random(seed)
+        if direction is None:
+            ux, uy = 1.0, 0.0
+        else:
+            ux, uy = self.screen_direction(direction)
+        px, py = -uy, ux
+        stretch_x = 1.0
+        stretch_y = 1.0
+        if attack_type == "razor":
+            stretch_x, stretch_y = 1.45, 0.72
+        elif attack_type == "torrent":
+            stretch_x, stretch_y = 1.28, 0.90
+        elif attack_type == "spiral":
+            stretch_x, stretch_y = 1.08, 0.82
+        elif attack_type == "shield":
+            stretch_x, stretch_y = 1.12, 1.12
+        segments = 11 if attack_type in ("chain", "fire") else 9
+        for i in range(segments):
+            start_angle = i * math.tau / segments + rng.uniform(-0.08, 0.08)
+            end_angle = start_angle + rng.uniform(0.18, 0.50)
+            if attack_type == "chain":
+                end_angle += rng.uniform(-0.12, 0.10)
+            points = []
+            samples = 5
+            for j in range(samples):
+                t = j / max(1, samples - 1)
+                angle = lerp(start_angle, end_angle, t)
+                jitter = rng.uniform(-0.045, 0.045) if attack_type in ("razor", "chain") else 0.0
+                local_x = math.cos(angle + jitter) * radius * stretch_x
+                local_y = math.sin(angle + jitter) * radius * stretch_y
+                points.append((center[0] + ux * local_x + px * local_y, center[1] + uy * local_x + py * local_y))
+            width = max(2, int((5 if attack_type in ("razor", "shield") else 4) * frac))
+            if len(points) >= 2:
+                pygame.draw.lines(self.screen, rgba(color, 210 * frac), False, points, width)
+                if attack_type in ("razor", "fire", "chain"):
+                    for point in (points[0], points[-1]):
+                        shard = max(3, int(radius * 0.055 * frac))
+                        self.draw_pixel_diamond(point[0], point[1], shard, rgba(color, 170 * frac))
 
     def draw_bubble(self, player, offset):
         now = time.time()
         if not player.bubble_active(now):
             return
+        character = self.character_for_player(player)
         left = max(0.0, player.bubble_until - now)
         frac = clamp(left / BUBBLE_DURATION, 0.0, 1.0)
         sx, sy = self.world_to_screen(player.x, player.y, offset)
         radius = self.meters_to_px(BUBBLE_RADIUS_M) * (1.0 + 0.08 * math.sin(now * 28))
         surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
-        pygame.draw.circle(surf, rgba(PALETTE["bubble"], 38 + 42 * frac), (sx, sy), int(radius))
-        pygame.draw.circle(surf, rgba(PALETTE["bubble"], 210), (sx, sy), int(radius), 4)
+        pygame.draw.circle(surf, rgba(PALETTE["bubble"], 26 + 32 * frac), (sx, sy), int(radius))
+        pygame.draw.circle(surf, rgba(character["secondary"], 70 + 40 * frac), (sx, sy), int(radius * 0.72), 2)
+        points = []
+        for i in range(12):
+            angle = now * 2.8 + i * math.tau / 12
+            r = radius * (0.92 + 0.08 * (i % 2))
+            points.append((sx + math.cos(angle) * r, sy + math.sin(angle) * r))
+        pygame.draw.polygon(surf, rgba(PALETTE["bubble"], 165), points, 4)
+        for i in range(6):
+            angle = -now * 3.6 + i * math.tau / 6
+            r1 = radius * 0.48
+            r2 = radius * 1.06
+            p1 = (sx + math.cos(angle) * r1, sy + math.sin(angle) * r1)
+            p2 = (sx + math.cos(angle + 0.22) * r2, sy + math.sin(angle + 0.22) * r2)
+            pygame.draw.line(surf, rgba(character["highlight"], 120 * frac), p1, p2, 3)
+        self.draw_broken_ring((sx, sy), character["highlight"], int(radius), frac, int(player.player_id + now * 6))
         self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
 
     def creature_sprite(self, player):
@@ -2441,9 +4175,7 @@ class SoupocalypseApp:
         self.screen.blit(shadow, (sx - shadow.get_width() // 2, sy - shadow.get_height() // 2 + 5))
 
         dx, dy = heading_vec(player.heading)
-        aim_end = self.world_to_screen(player.x + dx * 0.55, player.y + dy * 0.55, offset)
-        pygame.draw.line(self.screen, (*player.color,), (sx, sy), aim_end, 4)
-        pygame.draw.circle(self.screen, player.color, aim_end, 6)
+        self.draw_aim_indicator(player, sx, sy, dx, dy, offset)
 
         rotated, rect = self.player_sprite_pose(player, offset)
         if not player.alive:
@@ -2454,6 +4186,38 @@ class SoupocalypseApp:
             self.screen.blit(rotated, rect)
         label = self.font.render(player.label, True, PALETTE["text"])
         self.screen.blit(label, (sx - label.get_width() // 2, rect.top - 24))
+
+    def draw_aim_indicator(self, player, sx, sy, dx, dy, offset):
+        character = self.character_for_player(player)
+        aim_end = self.world_to_screen(player.x + dx * 0.58, player.y + dy * 0.58, offset)
+        nx, ny = -dy, dx
+        color = character["theme"]
+        highlight = character["highlight"]
+        pygame.draw.line(self.screen, rgba(color, 145), (sx, sy), aim_end, 4)
+        pygame.draw.line(self.screen, rgba(highlight, 125), (sx, sy), aim_end, 1)
+        now = time.time()
+        for i in range(7):
+            t = ((now * 0.85 + i * 0.173 + player.player_id * 0.011) % 1.0)
+            drift = math.sin(now * 4.0 + i * 1.7 + player.player_id) * 4.0
+            px = sx + (aim_end[0] - sx) * t + nx * drift
+            py = sy + (aim_end[1] - sy) * t + ny * drift
+            alpha = 80 + 55 * math.sin((t + now * 0.7) * math.tau)
+            size = 2 if i % 3 else 3
+            pygame.draw.rect(self.screen, rgba(highlight if i % 2 else color, alpha), (int(px) - size // 2, int(py) - size // 2, size, size))
+        self.draw_iso_aim_marker(aim_end, color, highlight, character["dark"])
+
+    def draw_iso_aim_marker(self, center, color, highlight, dark):
+        x, y = center
+        top = (x, y - 7)
+        right = (x + 8, y + 2)
+        bottom = (x + 1, y + 8)
+        left = (x - 8, y + 3)
+        shadow = [(px + 2, py + 3) for px, py in (top, right, bottom, left)]
+        pygame.draw.polygon(self.screen, (0, 0, 0, 145), shadow)
+        pygame.draw.polygon(self.screen, rgba(dark, 210), [left, bottom, right])
+        pygame.draw.polygon(self.screen, rgba(color, 225), [top, right, bottom, left])
+        pygame.draw.polygon(self.screen, rgba(highlight, 235), [top, right, (x, y + 1), left])
+        pygame.draw.line(self.screen, rgba(PALETTE["white"], 160), top, (x, y + 1), 1)
 
     def draw_hud(self):
         w = self.screen.get_width()
@@ -2467,7 +4231,7 @@ class SoupocalypseApp:
         self.draw_player_hud(self.players[101], 24, 22, panel_w)
         self.draw_player_hud(self.players[102], w - panel_w - 24, 22, panel_w)
         footer_text = (
-            "FAKE: P1 WASD QE F/R     P2 ARROWS , .  / RSHIFT     ENTER RESET     D RADAR DEBUG"
+            "FAKE: P1 WASD QE F/R     P2 ARROWS , .  / RSHIFT     ENTER RESET     Z RADAR DEBUG"
             if self.args.fake else self.hardware_status_text()
         )
         if time.time() < self.calibration_select_until:
@@ -2589,23 +4353,31 @@ class SoupocalypseApp:
 
     def draw_player_hud(self, player, x, y, width):
         panel = pygame.Rect(x, y, width, 78)
-        pygame.draw.rect(self.screen, (0, 0, 0), panel.move(0, 5), border_radius=10)
-        pygame.draw.rect(self.screen, PALETTE["panel_2"], panel, border_radius=10)
-        pygame.draw.rect(self.screen, PALETTE["dark_brown"], panel, 2, border_radius=10)
-        pygame.draw.rect(self.screen, player.color, panel.inflate(-8, -8), 2, border_radius=8)
+        now = time.time()
+        flash = clamp((self.hp_flash_until.get(player.player_id, 0.0) - now) / 0.52, 0.0, 1.0)
+        character = self.character_for_player(player)
+        self.draw_skew_panel(panel.move(0, 6), (0, 0, 0, 165), None, cut=16)
+        self.draw_skew_panel(panel, rgba(PALETTE["panel_2"], 238), rgba(player.color, 215 + 40 * flash), cut=16, border_width=3)
+        self.draw_slanted_strip(panel.left + 12, panel.top + 8, panel.width - 24, 7, -0.45, rgba(character["highlight"], 80 + 80 * flash))
+        portrait = self.character_portrait(next((i for i, c in enumerate(CHARACTER_SLOTS) if c["id"] == player.character_id), 0))
+        portrait_rect = pygame.Rect(panel.left + 10, panel.top + 10, 50, 50)
+        self.blit_fit(portrait, portrait_rect, alpha=210)
         name = self.font.render(player.label.upper(), True, player.color)
-        self.screen.blit(name, (x + 14, y + 10))
+        self.screen.blit(name, (x + 70, y + 10))
         hp_label = self.small_font.render("HP", True, PALETTE["muted"])
-        self.screen.blit(hp_label, (x + 14, y + 42))
+        self.screen.blit(hp_label, (x + 70, y + 42))
         for i in range(MAX_HP):
-            bx = x + 48 + i * 36
+            bx = x + 104 + i * 36
             color = PALETTE["soup"] if i < player.hp else PALETTE["dark_brown"]
-            pygame.draw.rect(self.screen, color, (bx, y + 44, 28, 18), border_radius=4)
+            if flash and i >= player.hp:
+                color = PALETTE["bad"]
+            pip = pygame.Rect(bx, y + 44 + int(math.sin(now * 50 + i) * 2 * flash), 28, 18)
+            self.draw_skew_panel(pip, color, rgba(PALETTE["white"], 120 * flash), cut=4, border_width=1)
         score = self.small_font.render(f"ROUNDS {player.wins}/{WIN_ROUNDS}", True, PALETTE["text"])
         self.screen.blit(score, (panel.right - score.get_width() - 14, y + 45))
 
     def draw_messages(self):
-        if self.match_state in ("ready", "round_over", "match_over"):
+        if self.match_state == "ready":
             text = self.big_font.render(self.round_message, True, PALETTE["beige"])
             rect = text.get_rect(center=(self.screen.get_width() // 2, self.screen.get_height() // 2))
             bg = rect.inflate(56, 34)
@@ -2613,6 +4385,127 @@ class SoupocalypseApp:
             pygame.draw.rect(self.screen, PALETTE["dark_brown"], bg, border_radius=14)
             pygame.draw.rect(self.screen, PALETTE["light_brown"], bg, 2, border_radius=14)
             self.screen.blit(text, rect)
+
+    def draw_round_presentation(self):
+        if self.match_state != "round_over" or self.round_winner_id is None:
+            return
+        winner = self.players.get(self.round_winner_id)
+        if winner is None:
+            return
+        now = time.time()
+        age = now - self.round_presentation_started_at
+        t = ease_out_cubic(age / max(0.001, ROUND_WIN_PRESENTATION))
+        w, h = self.screen.get_size()
+        character = self.character_for_player(winner)
+        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, channel(80 * t)))
+        self.screen.blit(overlay, (0, 0))
+        sx, sy = self.world_to_screen(winner.x, winner.y)
+        self.draw_starburst((sx, sy - 78), 120 + 40 * math.sin(now * 8), character["theme"], 120, seed=winner.player_id)
+        self.draw_jagged_splash((sx, sy - 78), 150, character["secondary"], winner.player_id * 17, alpha=72, stretch=(1.35, 0.72))
+        sprite, rect = self.player_sprite_pose(winner, target_pop=True)
+        rect.centerx = sx
+        rect.bottom = sy + 2
+        glow = sprite.copy()
+        glow.fill(rgba(character["highlight"], 150), special_flags=pygame.BLEND_RGBA_MULT)
+        self.screen.blit(glow, rect.move(0, -4))
+        self.screen.blit(sprite, rect)
+
+        banner = pygame.Rect(0, 0, min(820, w - 100), 96)
+        banner.center = (w // 2, int(h * 0.52))
+        slide = int((1.0 - t) * -w * 0.45)
+        banner.move_ip(slide, 0)
+        self.draw_skew_panel(banner.move(0, 8), (0, 0, 0, 185), None, cut=28)
+        self.draw_skew_panel(banner, rgba(character["dark"], 236), rgba(character["highlight"], 240), cut=28, border_width=4)
+        self.draw_slanted_strip(banner.left + 24, banner.top + 13, banner.width - 48, 9, -0.5, rgba(character["theme"], 155))
+        label = f"{winner.label.upper()} TAKES THE ROUND"
+        text = self.fit_text(self.big_font, label, banner.width - 58, character["highlight"])
+        self.screen.blit(text, text.get_rect(center=banner.center))
+
+    def draw_round_countdown_overlay(self):
+        if self.match_state != "round_countdown":
+            return
+        labels = ("3", "2", "1", "FIGHT!")
+        now = time.time()
+        elapsed = max(0.0, now - self.round_countdown_started_at)
+        step = min(3, int(elapsed / NEXT_ROUND_COUNTDOWN_STEP))
+        local = (elapsed - step * NEXT_ROUND_COUNTDOWN_STEP) / NEXT_ROUND_COUNTDOWN_STEP
+        w, h = self.screen.get_size()
+        p1 = self.character_for_player(self.players[101])
+        p2 = self.character_for_player(self.players[102])
+        center = (w // 2, h // 2)
+        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.polygon(overlay, rgba(p1["theme"], 68), [(-50, h * 0.30), (w * 0.48, h * 0.42), (w * 0.44, h * 0.62), (-70, h * 0.76)])
+        pygame.draw.polygon(overlay, rgba(p2["theme"], 68), [(w + 50, h * 0.26), (w * 0.52, h * 0.42), (w * 0.56, h * 0.64), (w + 70, h * 0.80)])
+        self.screen.blit(overlay, (0, 0), special_flags=pygame.BLEND_ADD)
+        self.draw_starburst(center, 120 + step * 18, PALETTE["soup"] if step < 3 else PALETTE["white"], 180, seed=step + 80)
+        label = labels[step]
+        scale = 1.25 + 0.48 * (1.0 - ease_out_cubic(local))
+        angle = math.sin(local * math.tau) * (8 if step < 3 else 3)
+        text = self.title_font.render(label, True, (12, 10, 10) if step < 3 else PALETTE["white"])
+        text = pygame.transform.rotozoom(text, angle, scale)
+        rect = text.get_rect(center=center)
+        shadow = text.copy()
+        shadow.fill((0, 0, 0, 190), special_flags=pygame.BLEND_RGBA_MULT)
+        self.screen.blit(shadow, rect.move(7, 8))
+        self.screen.blit(text, rect)
+
+    def draw_match_win_screen(self):
+        if self.match_state != "match_over" or not ENABLE_VICTORY_SCREEN or self.match_winner_id is None:
+            return
+        winner = self.players.get(self.match_winner_id)
+        if winner is None:
+            return
+        now = time.time()
+        age = now - self.match_win_started_at
+        t = ease_out_cubic(min(1.0, age / 0.85))
+        w, h = self.screen.get_size()
+        character = self.character_for_player(winner)
+        self.screen.fill(character["dark"])
+        pygame.draw.polygon(self.screen, rgba(character["theme"], 210), [(-120, 0), (w * (0.54 + 0.12 * t), 0), (w * (0.42 + 0.10 * t), h), (-120, h)])
+        pygame.draw.polygon(self.screen, rgba(character["secondary"], 190), [(w + 120, 0), (w * (0.52 - 0.10 * t), 0), (w * (0.62 - 0.12 * t), h), (w + 120, h)])
+        self.draw_halftone_field((w * 0.20, h * 0.22), 210, character["highlight"], 0.52, now)
+        self.draw_halftone_field((w * 0.82, h * 0.78), 230, character["accent"], 0.48, now + 1.1)
+        for i in range(30):
+            y = (i * 39 + now * 150) % (h + 100) - 50
+            self.draw_slanted_strip(i * 67 % (w + 120) - 60, y, 170, 8 + i % 3 * 4, -0.45, rgba(PALETTE["white"], 36))
+
+        art = self.creature_sprite(winner)
+        art_h = int(h * (0.58 + 0.05 * math.sin(now * 3)))
+        art_w = int(art_h * art.get_width() / max(1, art.get_height()))
+        scaled = pygame.transform.smoothscale(art, (max(1, art_w), max(1, art_h)))
+        art_rect = scaled.get_rect(center=(int(w * (0.30 + 0.04 * t)), int(h * 0.58)))
+        glow = scaled.copy()
+        glow.fill(rgba(character["highlight"], 150), special_flags=pygame.BLEND_RGBA_MULT)
+        self.screen.blit(glow, art_rect.move(8, -8))
+        self.screen.blit(scaled, art_rect)
+
+        title = f"{winner.label.upper()} WINS"
+        title_surf = self.fit_text(self.title_font, title, int(w * 0.58), PALETTE["white"])
+        title_rect = title_surf.get_rect(center=(int(w * 0.64), int(h * 0.34)))
+        self.draw_starburst(title_rect.center, max(title_rect.width * 0.42, 180), character["accent"], 108, seed=winner.player_id + 44)
+        self.screen.blit(title_surf, title_rect)
+        subtitle = self.big_font.render("THE LAST BOWL", True, character["highlight"])
+        subtitle_rect = subtitle.get_rect(center=(int(w * 0.64), int(h * 0.47)))
+        self.draw_skew_panel(subtitle_rect.inflate(44, 22), rgba(character["dark"], 220), rgba(character["highlight"], 220), cut=18, border_width=3)
+        self.screen.blit(subtitle, subtitle_rect)
+        score = self.font.render(f"P{1 if winner.player_id == 101 else 2} VICTORY     ROUNDS {winner.wins}/2", True, PALETTE["beige"])
+        self.screen.blit(score, score.get_rect(center=(int(w * 0.64), int(h * 0.58))))
+        prompt = self.small_font.render("PRESS ENTER TO RETURN TO CHARACTER SELECT", True, PALETTE["light_brown"])
+        self.screen.blit(prompt, prompt.get_rect(center=(int(w * 0.64), int(h * 0.72))))
+
+    def draw_screen_flashes(self):
+        if not self.screen_flashes:
+            return
+        now = time.time()
+        overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        for flash in self.screen_flashes:
+            age = now - flash.created_at
+            frac = clamp(1.0 - age / max(0.001, flash.duration), 0.0, 1.0)
+            layer = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+            layer.fill(rgba(flash.color, flash.alpha * frac))
+            overlay.blit(layer, (0, 0), special_flags=pygame.BLEND_ADD)
+        self.screen.blit(overlay, (0, 0), special_flags=pygame.BLEND_ADD)
 
     def draw_impact_frames(self):
         if not self.impact_frames:
@@ -2624,17 +4517,26 @@ class SoupocalypseApp:
         if frame.kind != "hit":
             return
         frame_index = int(age * TARGET_FPS)
-        inverted = frame_index >= 4
-        bg = (0, 0, 0) if inverted else PALETTE["white"]
-        fg = PALETTE["white"] if inverted else (0, 0, 0)
-        accent = PALETTE["soup"] if inverted else frame.color
+        contact_flash = frame_index < IMPACT_FRAME_FLASH_FRAMES
+        inverted = frame_index >= IMPACT_FRAME_INVERT_FRAME
+        bg = frame.color if contact_flash else (0, 0, 0) if inverted else PALETTE["white"]
+        fg = PALETTE["white"] if inverted or contact_flash else (0, 0, 0)
+        accent = PALETTE["soup"] if inverted else PALETTE["white"] if contact_flash else frame.color
         self.screen.fill(bg)
+        smear_dx, smear_dy = self.screen_direction(frame.direction)
         for player in sorted(self.players.values(), key=lambda p: p.y, reverse=True):
-            target_pop = player.player_id == frame.target_id and frame_index < 6
+            is_target = player.player_id == frame.target_id
+            target_pop = is_target and frame_index < IMPACT_FRAME_INVERT_FRAME
             sprite, rect = self.player_sprite_pose(player, target_pop=target_pop)
             if target_pop:
-                shove = 5 if frame_index % 2 == 0 else -5
-                rect.move_ip(shove, 0)
+                shove = IMPACT_FRAME_SHAKE if frame_index % 2 == 0 else -IMPACT_FRAME_SHAKE
+                rect.move_ip(int(smear_dx * shove), int(smear_dy * shove))
+            if is_target and frame_index < IMPACT_FRAME_REENTRY_FRAME:
+                for i in range(1, 4):
+                    alpha_color = accent if i % 2 else fg
+                    smear = self.sprite_silhouette(sprite, rgba(alpha_color, 120 if i == 1 else 70))
+                    offset = int(i * (7 if inverted else 5))
+                    self.screen.blit(smear, rect.move(int(-smear_dx * offset), int(-smear_dy * offset)))
             silhouette = self.sprite_silhouette(sprite, rgba(fg, 255))
             self.screen.blit(silhouette, rect)
         self.draw_impact_hit_marks(frame, fg, accent, frac, frame_index)
@@ -2647,6 +4549,8 @@ class SoupocalypseApp:
         if frame.hit_point is None:
             return
         hx, hy = self.world_to_screen(frame.hit_point[0], frame.hit_point[1])
+        dx, dy = self.screen_direction(frame.direction)
+        nx, ny = -dy, dx
         twist = 0.24 if frame_index % 2 else 0.0
         spokes = 10
         for i in range(spokes):
@@ -2660,6 +4564,71 @@ class SoupocalypseApp:
             pygame.draw.line(self.screen, accent, (x1, y1), (x2, y2), 5)
             pygame.draw.line(self.screen, fg, (x1, y1), (x2, y2), 2)
         pygame.draw.circle(self.screen, accent, (hx, hy), 14 + int(12 * frac), 4)
+        attack_type = getattr(frame, "attack_type", "razor")
+        profile = ATTACK_PROFILES.get(attack_type, ATTACK_PROFILES["razor"])
+        for i in range(14):
+            offset = (i - 6.5) * 32
+            start = (hx - dx * 360 + nx * offset, hy - dy * 360 + ny * offset)
+            end = (hx - dx * 74 + nx * offset * 0.22, hy - dy * 74 + ny * offset * 0.22)
+            pygame.draw.line(self.screen, accent, start, end, 4 if i % 3 == 0 else 2)
+        if HIT_TYPOGRAPHY and frame_index >= IMPACT_FRAME_FLASH_FRAMES:
+            word = profile.get("hitWord", "HIT")
+            text = self.big_font.render(word, True, accent)
+            scale = 1.25 + 0.35 * frac
+            text = pygame.transform.rotozoom(text, -8 + math.sin(frame_index) * 4, scale)
+            text_rect = text.get_rect(center=(hx + nx * 120 - dx * 30, hy + ny * 74 - dy * 30))
+            shadow = text.copy()
+            shadow.fill(rgba(fg, 170), special_flags=pygame.BLEND_RGBA_MULT)
+            self.screen.blit(shadow, text_rect.move(5, 6))
+            self.screen.blit(text, text_rect)
+        if attack_type == "chain":
+            rng = random.Random(frame_index + 44)
+            for _ in range(8):
+                x1 = hx + rng.uniform(-120, 120)
+                y1 = hy + rng.uniform(-90, 90)
+                x2 = x1 + rng.uniform(-48, 48)
+                y2 = y1 + rng.uniform(-48, 48)
+                pygame.draw.line(self.screen, accent, (x1, y1), (x2, y2), 4)
+                pygame.draw.line(self.screen, fg, (x1, y1), (x2, y2), 1)
+        elif attack_type == "spiral":
+            points = []
+            for i in range(42):
+                t = i / 41
+                angle = t * math.tau * 2.4 + frame_index * 0.3
+                r = 12 + t * 104 * frac
+                points.append((hx + math.cos(angle) * r, hy + math.sin(angle) * r * 0.72))
+            pygame.draw.lines(self.screen, accent, False, points, 5)
+            pygame.draw.lines(self.screen, fg, False, points, 2)
+        elif attack_type == "torrent":
+            rng = random.Random(frame_index + 88)
+            for _ in range(18):
+                size = rng.randint(8, 24)
+                x = hx + rng.uniform(-110, 110) * frac
+                y = hy + rng.uniform(-80, 80) * frac
+                pygame.draw.rect(self.screen, accent, (x, y, size, size))
+                pygame.draw.rect(self.screen, fg, (x + 3, y + 3, max(2, size // 3), max(2, size // 3)))
+        elif attack_type == "emblem":
+            for i in range(5):
+                angle = i * math.tau / 5 + frame_index * 0.24
+                cx = hx + math.cos(angle) * 72 * frac
+                cy = hy + math.sin(angle) * 52 * frac
+                self.draw_starburst((cx, cy), 22, accent, 210, seed=i + frame_index)
+        elif attack_type == "razor":
+            for i in range(4):
+                offset = (i - 1.5) * 70
+                p1 = (hx - dx * 260 + nx * offset, hy - dy * 260 + ny * offset)
+                p2 = (hx + dx * 280 - nx * offset * 0.20, hy + dy * 280 - ny * offset * 0.20)
+                pygame.draw.line(self.screen, accent, p1, p2, 14 - i * 2)
+                pygame.draw.line(self.screen, fg, p1, p2, 4)
+        elif attack_type == "fire":
+            rng = random.Random(frame_index + 184)
+            for _ in range(24):
+                size = rng.randint(10, 34)
+                x = hx + rng.uniform(-170, 170) * frac
+                y = hy + rng.uniform(-130, 130) * frac
+                pygame.draw.rect(self.screen, accent, (x, y, size, size))
+                inner = max(2, int(size * 0.35))
+                pygame.draw.rect(self.screen, fg, (x + size * 0.25, y + size * 0.25, inner, inner))
 
     def game_time_scale(self, now):
         if now < self.freeze_until:
