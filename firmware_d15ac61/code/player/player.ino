@@ -49,20 +49,9 @@ const uint8_t ONBOARD_LED_PIN = 2;
 #define WIFI_CHANNEL 6
 const uint16_t PACKET_MAGIC = 0x51A7;
 const uint8_t PACKET_TYPE_PLAYER = 20;
-const uint8_t PACKET_TYPE_COMMAND = 31;
-const uint8_t PACKET_TYPE_MAGCAL = 32;
 const uint8_t ACTION_NONE = 0;
 const uint8_t ACTION_BEAM = 1;
 const uint8_t ACTION_BUBBLE = 2;
-const uint8_t PLAYER_CMD_NONE = 0;
-const uint8_t PLAYER_CMD_MAGCAL = 1;
-const uint8_t PLAYER_CMD_MAGCALRESET = 2;
-const uint8_t PLAYER_CMD_CAL = 3;
-const uint8_t MAGCAL_STATE_STARTED = 1;
-const uint8_t MAGCAL_STATE_RUNNING = 2;
-const uint8_t MAGCAL_STATE_OK = 3;
-const uint8_t MAGCAL_STATE_ERR = 4;
-const uint8_t MAGCAL_STATE_RESET = 5;
 
 const uint32_t STATUS_INTERVAL_MS = 55;
 const uint32_t ACTION_LOCKOUT_MS = 420;
@@ -107,33 +96,6 @@ struct __attribute__((packed)) PlayerPacket {
   uint8_t action;
   uint8_t flags;
   uint32_t uptimeMs;
-};
-
-struct __attribute__((packed)) PlayerCommandPacket {
-  uint16_t magic;
-  uint8_t packetType;
-  uint8_t targetId;
-  uint8_t command;
-  uint16_t sequence;
-  uint32_t valueMs;
-};
-
-struct __attribute__((packed)) PlayerMagCalPacket {
-  uint16_t magic;
-  uint8_t packetType;
-  uint8_t playerId;
-  uint16_t sequence;
-  uint8_t state;
-  uint8_t progress;
-  uint8_t quality;
-  uint8_t flags;
-  uint16_t samples;
-  uint16_t elapsedMs10;
-  uint16_t remainingMs10;
-  uint16_t radiusX;
-  uint16_t radiusY;
-  uint16_t radiusZ;
-  uint16_t avgRadius;
 };
 
 uint16_t packetSequence = 0;
@@ -196,10 +158,6 @@ bool aimDebug = false;
 uint32_t lastMagDebugMs = 0;
 uint32_t lastAimDebugMs = 0;
 String serialLine = "";
-volatile uint8_t pendingRemoteCommand = PLAYER_CMD_NONE;
-volatile uint32_t pendingRemoteValueMs = 0;
-volatile uint16_t pendingRemoteSeq = 0;
-uint16_t lastRemoteSeqHandled = 0xFFFF;
 
 float normalizeDeg(float deg) {
   while (deg >= 180.0f) deg -= 360.0f;
@@ -519,51 +477,9 @@ void printMagSample() {
   Serial.println();
 }
 
-uint16_t clampU16(float value) {
-  if (value <= 0.0f) return 0;
-  if (value >= 65535.0f) return 65535;
-  return (uint16_t)roundf(value);
-}
-
-uint8_t clampPercent(float value) {
-  if (value <= 0.0f) return 0;
-  if (value >= 100.0f) return 100;
-  return (uint8_t)roundf(value);
-}
-
-uint8_t magCalQuality(uint32_t samples, float xRadius, float yRadius) {
-  float sampleQ = clampFloat((float)samples / 40.0f, 0.0f, 1.0f);
-  float xQ = clampFloat(xRadius / 30.0f, 0.0f, 1.0f);
-  float yQ = clampFloat(yRadius / 30.0f, 0.0f, 1.0f);
-  return clampPercent(100.0f * min(sampleQ, min(xQ, yQ)));
-}
-
-void sendMagCalStatus(uint8_t state, uint8_t progress, uint8_t quality, uint32_t samples,
-                      uint32_t elapsedMs, uint32_t remainingMs,
-                      float xRadius, float yRadius, float zRadius, float avgRadius) {
-  PlayerMagCalPacket packet = {};
-  packet.magic = PACKET_MAGIC;
-  packet.packetType = PACKET_TYPE_MAGCAL;
-  packet.playerId = PLAYER_ID;
-  packet.sequence = packetSequence++;
-  packet.state = state;
-  packet.progress = progress;
-  packet.quality = quality;
-  packet.flags = (compassReady ? 0x01 : 0x00) | (magCalReady ? 0x04 : 0x00);
-  packet.samples = (uint16_t)min(samples, (uint32_t)65535);
-  packet.elapsedMs10 = (uint16_t)min(elapsedMs / 10, (uint32_t)65535);
-  packet.remainingMs10 = (uint16_t)min(remainingMs / 10, (uint32_t)65535);
-  packet.radiusX = clampU16(xRadius);
-  packet.radiusY = clampU16(yRadius);
-  packet.radiusZ = clampU16(zRadius);
-  packet.avgRadius = clampU16(avgRadius);
-  esp_now_send(broadcastMac, (uint8_t *)&packet, sizeof(packet));
-}
-
 void calibrateMagnetometer(uint32_t durationMs) {
   if (!compassReady) {
     Serial.println("MAG_CAL,ERR,no_compass");
-    sendMagCalStatus(MAGCAL_STATE_ERR, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     return;
   }
   if (durationMs < 2500) durationMs = 2500;
@@ -572,7 +488,6 @@ void calibrateMagnetometer(uint32_t durationMs) {
   int16_t mx = 0, my = 0, mz = 0;
   if (!readCompassRaw(mx, my, mz)) {
     Serial.println("MAG_CAL,ERR,read_fail");
-    sendMagCalStatus(MAGCAL_STATE_ERR, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     return;
   }
 
@@ -580,35 +495,23 @@ void calibrateMagnetometer(uint32_t durationMs) {
   int16_t maxX = mx;
   int16_t minY = my;
   int16_t maxY = my;
-  int16_t minZ = mz;
-  int16_t maxZ = mz;
   uint32_t samples = 0;
   uint32_t started = millis();
   uint32_t nextPrint = started;
 
   Serial.print("MAG_CAL,START,ms=");
   Serial.println(durationMs);
-  sendMagCalStatus(MAGCAL_STATE_STARTED, 0, 0, 0, 0, durationMs, 0, 0, 0, 0);
   while (millis() - started < durationMs) {
     if (readCompassRaw(mx, my, mz)) {
       if (mx < minX) minX = mx;
       if (mx > maxX) maxX = mx;
       if (my < minY) minY = my;
       if (my > maxY) maxY = my;
-      if (mz < minZ) minZ = mz;
-      if (mz > maxZ) maxZ = mz;
       samples++;
     }
     uint32_t now = millis();
     if (now >= nextPrint) {
       nextPrint = now + 500;
-      uint32_t elapsed = now - started;
-      uint32_t remaining = elapsed < durationMs ? durationMs - elapsed : 0;
-      float xRadiusNow = ((float)maxX - (float)minX) * 0.5f;
-      float yRadiusNow = ((float)maxY - (float)minY) * 0.5f;
-      float zRadiusNow = ((float)maxZ - (float)minZ) * 0.5f;
-      uint8_t progress = clampPercent(100.0f * (float)elapsed / (float)durationMs);
-      uint8_t quality = magCalQuality(samples, xRadiusNow, yRadiusNow);
       Serial.print("MAG_CAL,SAMPLE,count=");
       Serial.print(samples);
       Serial.print(",x=");
@@ -618,21 +521,13 @@ void calibrateMagnetometer(uint32_t durationMs) {
       Serial.print(",y=");
       Serial.print(minY);
       Serial.print("..");
-      Serial.print(maxY);
-      Serial.print(",z=");
-      Serial.print(minZ);
-      Serial.print("..");
-      Serial.println(maxZ);
-      sendMagCalStatus(MAGCAL_STATE_RUNNING, progress, quality, samples, elapsed, remaining,
-                       xRadiusNow, yRadiusNow, zRadiusNow, (xRadiusNow + yRadiusNow) * 0.5f);
+      Serial.println(maxY);
     }
     delay(20);
   }
 
   float xRadius = ((float)maxX - (float)minX) * 0.5f;
   float yRadius = ((float)maxY - (float)minY) * 0.5f;
-  float zRadius = ((float)maxZ - (float)minZ) * 0.5f;
-  uint8_t finalQuality = magCalQuality(samples, xRadius, yRadius);
   if (samples < 40 || xRadius < 30.0f || yRadius < 30.0f) {
     magCalReady = false;
     Serial.print("MAG_CAL,ERR,not_enough_motion,samples=");
@@ -641,8 +536,6 @@ void calibrateMagnetometer(uint32_t durationMs) {
     Serial.print(xRadius, 1);
     Serial.print(",yRadius=");
     Serial.println(yRadius, 1);
-    sendMagCalStatus(MAGCAL_STATE_ERR, 100, finalQuality, samples, durationMs, 0,
-                     xRadius, yRadius, zRadius, (xRadius + yRadius) * 0.5f);
     return;
   }
 
@@ -673,13 +566,7 @@ void calibrateMagnetometer(uint32_t durationMs) {
   Serial.print(",y=");
   Serial.print(minY);
   Serial.print("..");
-  Serial.print(maxY);
-  Serial.print(",z=");
-  Serial.print(minZ);
-  Serial.print("..");
-  Serial.println(maxZ);
-  sendMagCalStatus(MAGCAL_STATE_OK, 100, finalQuality, samples, durationMs, 0,
-                   xRadius, yRadius, zRadius, avgRadius);
+  Serial.println(maxY);
 }
 
 void setCompassMode(String mode) {
@@ -727,7 +614,6 @@ void handleSerialCommand(String line) {
     magCalScaleY = 1.0f;
     headingInitialized = false;
     Serial.println("MAG_CAL,RESET");
-    sendMagCalStatus(MAGCAL_STATE_RESET, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   } else if (upper.startsWith("MAGCAL")) {
     uint32_t durationMs = (uint32_t)csvPart(upper, 1).toInt();
     if (durationMs == 0) durationMs = 8000;
@@ -1076,59 +962,6 @@ void updateOled() {
 #endif
 }
 
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-void onEspNowCommand(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-  (void)info;
-  if (len != sizeof(PlayerCommandPacket)) return;
-  PlayerCommandPacket packet;
-  memcpy(&packet, data, sizeof(packet));
-  if (packet.magic != PACKET_MAGIC || packet.packetType != PACKET_TYPE_COMMAND) return;
-  if (packet.targetId != PLAYER_ID && packet.targetId != 0) return;
-  pendingRemoteCommand = packet.command;
-  pendingRemoteValueMs = packet.valueMs;
-  pendingRemoteSeq = packet.sequence;
-}
-#else
-void onEspNowCommand(const uint8_t *mac, const uint8_t *data, int len) {
-  (void)mac;
-  if (len != sizeof(PlayerCommandPacket)) return;
-  PlayerCommandPacket packet;
-  memcpy(&packet, data, sizeof(packet));
-  if (packet.magic != PACKET_MAGIC || packet.packetType != PACKET_TYPE_COMMAND) return;
-  if (packet.targetId != PLAYER_ID && packet.targetId != 0) return;
-  pendingRemoteCommand = packet.command;
-  pendingRemoteValueMs = packet.valueMs;
-  pendingRemoteSeq = packet.sequence;
-}
-#endif
-
-void handlePendingRemoteCommand() {
-  uint8_t command = pendingRemoteCommand;
-  uint16_t seq = pendingRemoteSeq;
-  if (command == PLAYER_CMD_NONE || seq == lastRemoteSeqHandled) return;
-  noInterrupts();
-  pendingRemoteCommand = PLAYER_CMD_NONE;
-  uint32_t valueMs = pendingRemoteValueMs;
-  interrupts();
-  lastRemoteSeqHandled = seq;
-  Serial.print("REMOTE_CMD,");
-  Serial.print(command);
-  Serial.print(",seq=");
-  Serial.print(seq);
-  Serial.print(",valueMs=");
-  Serial.println(valueMs);
-  if (command == PLAYER_CMD_MAGCAL) {
-    calibrateMagnetometer(valueMs ? valueMs : 8000);
-  } else if (command == PLAYER_CMD_MAGCALRESET) {
-    magCalReady = false;
-    headingInitialized = false;
-    Serial.println("MAG_CAL,RESET");
-    sendMagCalStatus(MAGCAL_STATE_RESET, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-  } else if (command == PLAYER_CMD_CAL) {
-    calibrateHeading();
-  }
-}
-
 void setupEspNow() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -1143,7 +976,6 @@ void setupEspNow() {
   peerInfo.channel = WIFI_CHANNEL;
   peerInfo.encrypt = false;
   esp_now_add_peer(&peerInfo);
-  esp_now_register_recv_cb(onEspNowCommand);
 }
 
 void setupDisplayAndLeds() {
@@ -1181,7 +1013,6 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   readSerialCommands();
-  handlePendingRemoteCommand();
   updateMpu();
   updateCompass();
   updateButton();

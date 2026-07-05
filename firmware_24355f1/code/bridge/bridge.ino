@@ -60,6 +60,8 @@ const uint8_t MAGCAL_STATE_OK = 3;
 const uint8_t MAGCAL_STATE_ERR = 4;
 const uint8_t MAGCAL_STATE_RESET = 5;
 
+uint8_t broadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
 #if HAS_NEOPIXEL
 Adafruit_NeoPixel pixels(24, LED_STRIP_PIN, NEO_GRB + NEO_KHZ800);
 #endif
@@ -102,8 +104,8 @@ struct __attribute__((packed)) PlayerMagCalPacket {
   uint16_t avgRadius;
 };
 
-uint8_t broadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 uint16_t commandSequence = 0;
+
 uint8_t radarBuffer[96];
 uint8_t radarLen = 0;
 
@@ -200,16 +202,20 @@ int splitCsv(String line, String parts[], int maxParts) {
   return count;
 }
 
-uint8_t parsePlayerCommand(String command) {
-  command.trim();
-  command.toUpperCase();
-  if (command == "MAGCAL") return PLAYER_CMD_MAGCAL;
-  if (command == "MAGCALRESET") return PLAYER_CMD_MAGCALRESET;
-  if (command == "CAL") return PLAYER_CMD_CAL;
+uint8_t parsePlayerCommand(String text) {
+  text.trim();
+  text.toUpperCase();
+  if (text == "MAGCAL" || text == "CALMAG") return PLAYER_CMD_MAGCAL;
+  if (text == "MAGCALRESET" || text == "RESETMAG") return PLAYER_CMD_MAGCALRESET;
+  if (text == "CAL" || text == "RECENTER") return PLAYER_CMD_CAL;
   return PLAYER_CMD_NONE;
 }
 
 void sendPlayerCommand(uint8_t targetId, uint8_t command, uint32_t valueMs) {
+  if (command == PLAYER_CMD_NONE) {
+    Serial.println("PLAYERCMD_ERR,bad_command");
+    return;
+  }
   PlayerCommandPacket packet = {};
   packet.magic = PACKET_MAGIC;
   packet.packetType = PACKET_TYPE_COMMAND;
@@ -218,24 +224,31 @@ void sendPlayerCommand(uint8_t targetId, uint8_t command, uint32_t valueMs) {
   packet.sequence = commandSequence++;
   packet.valueMs = valueMs;
   esp_err_t result = esp_now_send(broadcastMac, (uint8_t *)&packet, sizeof(packet));
-  Serial.print(result == ESP_OK ? "PLAYERCMD_SENT," : "PLAYERCMD_ERR,");
+  Serial.print("PLAYERCMD_SENT,target=");
   Serial.print(targetId);
-  Serial.print(",");
+  Serial.print(",command=");
   Serial.print(command);
-  Serial.print(",");
+  Serial.print(",seq=");
   Serial.print(packet.sequence);
-  Serial.print(",");
-  Serial.println(valueMs);
+  Serial.print(",valueMs=");
+  Serial.print(valueMs);
+  Serial.print(",result=");
+  Serial.println((int)result);
 }
 
 void handleSerialLine(String line) {
   line.trim();
   if (!line.length()) return;
-  String parts[8];
-  int count = splitCsv(line, parts, 8);
+  String parts[10];
+  int count = splitCsv(line, parts, 10);
   parts[0].toUpperCase();
   if (parts[0] == "FX" && count >= 2) {
     handleFx(parts[1]);
+  } else if (parts[0] == "PLAYERCMD" && count >= 3) {
+    uint8_t targetId = (uint8_t)parts[1].toInt();
+    uint8_t command = parsePlayerCommand(parts[2]);
+    uint32_t valueMs = count >= 4 ? (uint32_t)parts[3].toInt() : 0;
+    sendPlayerCommand(targetId, command, valueMs);
   } else if (parts[0] == "RELAY" && count >= 4) {
     String name = parts[1];
     name.toLowerCase();
@@ -243,15 +256,6 @@ void handleSerialLine(String line) {
     uint32_t ms = (uint32_t)parts[3].toInt();
     if (name == "light") setLight(on, ms);
     if (name == "fan") setFan(on, ms);
-  } else if (parts[0] == "PLAYERCMD" && count >= 3) {
-    uint8_t targetId = (uint8_t)parts[1].toInt();
-    uint8_t command = parsePlayerCommand(parts[2]);
-    uint32_t valueMs = count >= 4 ? (uint32_t)parts[3].toInt() : 0;
-    if (command == PLAYER_CMD_NONE) {
-      Serial.println("PLAYERCMD_ERR,bad_command");
-      return;
-    }
-    sendPlayerCommand(targetId, command, valueMs);
   }
 }
 

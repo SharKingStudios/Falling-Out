@@ -1316,6 +1316,26 @@ class SoupocalypseApp:
             seen_at=time.time(),
         )
 
+    def mark_magcal_command_sent(self, parts):
+        if len(parts) < 5:
+            return
+        pid = int(parts[1])
+        command = int(float(parts[2]))
+        if command != 1:
+            return
+        duration_ms = int(float(parts[4]))
+        self.mag_cal_status[pid] = MagCalStatus(
+            player_id=pid,
+            state="RUNNING",
+            progress=8,
+            quality=0,
+            elapsed_ms=0,
+            remaining_ms=duration_ms,
+            flags=0x80,
+            seen_at=time.time(),
+        )
+        self.log(f"P{pid} compass calibration started")
+
     def handle_magcal_line(self, parts):
         if len(parts) < 13:
             return
@@ -1503,6 +1523,12 @@ class SoupocalypseApp:
                 rssi = float(parts[5])
                 uptime = int(float(parts[6])) if len(parts) >= 7 else 0
                 self.apply_player_packet(pid, heading, action, seq, rssi, uptime)
+            elif tag == "PLAYER_LOCAL" and len(parts) >= 5:
+                pid = int(parts[1])
+                heading = float(parts[2])
+                action = self.parse_action(parts[3])
+                seq = int(parts[4])
+                self.apply_player_packet(pid, heading, action, seq, None, 0)
             elif tag == "ACTION" and len(parts) >= 5:
                 pid = int(parts[1])
                 action = self.parse_action(parts[2])
@@ -1523,6 +1549,9 @@ class SoupocalypseApp:
                     self.players[pid].heading = heading
             elif tag == "MAGCAL":
                 self.handle_magcal_line(parts)
+            elif tag == "PLAYERCMD_SENT":
+                self.mark_magcal_command_sent(parts)
+                self.log(line[:90])
             elif tag in ("LOG", "BRIDGE_BOOT", "WARN", "ERR", "PLAYERCMD_SENT", "PLAYERCMD_ERR"):
                 self.log(line[:90])
         except ValueError:
@@ -1537,15 +1566,20 @@ class SoupocalypseApp:
         return ACTION_NONE
 
     def apply_player_packet(self, pid, heading, action, seq, rssi, uptime):
+        now = time.time()
         player = self.players.get(pid)
         if player is None:
+            if action != ACTION_NONE:
+                self.log(f"unknown P{pid} action={action} seq={seq}")
             return
         player.heading = normalize_deg(heading)
-        player.last_seen_at = time.time()
+        player.last_seen_at = now
         if rssi is not None and rssi < 0:
             player.rssi = rssi if player.rssi is None else player.rssi * 0.85 + rssi * 0.15
         if action != ACTION_NONE and seq != player.last_action_seq:
             player.last_action_seq = seq
+            label = "beam" if action == ACTION_BEAM else "bubble" if action == ACTION_BUBBLE else str(action)
+            self.log(f"P{pid} {label} seq={seq} state={self.match_state}")
             self.request_action(player, action)
 
     def update_identity_from_radar(self):
@@ -1702,10 +1736,7 @@ class SoupocalypseApp:
         if state is None:
             return
         now = time.time()
-        if action == ACTION_BEAM:
-            if state.selected_index is not None:
-                self.menu_deny(state, "LOCKED")
-                return
+        if action in (ACTION_BEAM, ACTION_BUBBLE) and state.selected_index is None:
             index = state.hover_index
             if index is None or not (0 <= index < len(CHARACTER_SLOTS)):
                 self.menu_deny(state, "NO TARGET")
@@ -1730,10 +1761,7 @@ class SoupocalypseApp:
             if self.all_menu_players_selected():
                 self.start_menu_countdown()
             return
-        if action == ACTION_BUBBLE:
-            if state.selected_index is None:
-                self.menu_deny(state, "PICK FIRST")
-                return
+        if action in (ACTION_BEAM, ACTION_BUBBLE):
             old_index = state.selected_index
             state.selected_index = None
             state.selected_at = 0.0
@@ -2042,6 +2070,19 @@ class SoupocalypseApp:
                     self.calibration_select_until = 0.0
                     if self.send_player_command(player_id, "MAGCAL", MAGCAL_COMMAND_MS):
                         self.set_local_magcal_requested(player_id, MAGCAL_COMMAND_MS)
+                elif event.key in (pygame.K_1, pygame.K_2) and self.match_state in MENU_STATES:
+                    player_id = 101 if event.key == pygame.K_1 else 102
+                    self.force_menu_lock(player_id)
+                elif event.key in (pygame.K_f, pygame.K_SLASH) and self.match_state in MENU_STATES:
+                    player_id = 101 if event.key == pygame.K_f else 102
+                    self.force_menu_lock(player_id)
+
+    def force_menu_lock(self, player_id):
+        player = self.players.get(player_id)
+        if player is None:
+            return
+        self.log(f"force P{player_id} select")
+        self.request_action(player, ACTION_BEAM)
 
     def update_fake_input(self, dt):
         keys = pygame.key.get_pressed()
@@ -4253,12 +4294,33 @@ class SoupocalypseApp:
 
     def current_magcal_status(self):
         now = time.time()
+        self.refresh_local_magcal_statuses(now)
         visible = [status for status in self.mag_cal_status.values() if status.visible(now)]
         if not visible:
             return None
         active = [status for status in visible if status.active(now)]
         candidates = active or visible
         return max(candidates, key=lambda status: status.seen_at)
+
+    def refresh_local_magcal_statuses(self, now):
+        for status in self.mag_cal_status.values():
+            if status.state != "RUNNING" or status.samples or status.quality or not (status.flags & 0x80):
+                continue
+            total_ms = max(status.elapsed_ms + status.remaining_ms, MAGCAL_COMMAND_MS)
+            elapsed_ms = int(max(0.0, now - status.seen_at) * 1000)
+            if elapsed_ms >= total_ms:
+                status.state = "ERR"
+                status.progress = 98
+                status.quality = 0
+                status.elapsed_ms = total_ms
+                status.remaining_ms = 0
+                status.seen_at = now
+                self.log(f"P{status.player_id} no calibration packets received")
+                self.sounds.play("invalid")
+                continue
+            status.elapsed_ms = min(elapsed_ms, total_ms)
+            status.remaining_ms = max(0, total_ms - elapsed_ms)
+            status.progress = clamp(int(100 * status.elapsed_ms / max(1, total_ms)), status.progress, 98)
 
     def format_seconds(self, ms):
         seconds = max(0, int(round(ms / 1000.0)))
@@ -4267,6 +4329,8 @@ class SoupocalypseApp:
     def magcal_instruction(self, status):
         if status.state == "REQUESTED":
             return "Waiting for controller. Keep it away from metal."
+        if status.state == "RUNNING" and status.samples == 0:
+            return "Command sent. Do figure-eights until the controller finishes."
         if status.state == "OK":
             return "Saved. Recenter heading in play position."
         if status.state == "ERR":
