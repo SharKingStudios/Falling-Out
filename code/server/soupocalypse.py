@@ -56,6 +56,8 @@ BASE_DIR = Path(__file__).resolve().parent
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 SPRITE_DIR = BASE_DIR / "assets" / "sprites"
 GENERATED_AUDIO_DIR = BASE_DIR / "assets" / "generated_audio" / "fight"
+MUSIC_DIR = BASE_DIR / "assets" / "music"
+SOUP_PLACEHOLDER_SPRITE = SPRITE_DIR / "soup.jpg"
 CEILING_SEAL_SPRITE = SPRITE_DIR / "ceiling_seal_plush.png"
 HELLS_BELLS_FONT = FONT_DIR / "Hells-Bells.otf"
 OUTFIT_FONT = FONT_DIR / "Outfit-latin.woff2"
@@ -109,7 +111,7 @@ FIGHT_MAX_PARTICLES = 1300
 FIGHT_SFX_MASTER_VOLUME = 0.96
 FIGHT_VOICE_MASTER_VOLUME = 0.82
 ATTACK_LINE_COOLDOWN = 1.05
-ROUND_WIN_PRESENTATION = 1.55
+ROUND_WIN_PRESENTATION = 3.10
 NEXT_ROUND_COUNTDOWN_STEP = 0.62
 NEXT_ROUND_COUNTDOWN_TOTAL = NEXT_ROUND_COUNTDOWN_STEP * 4
 MATCH_WIN_SCREEN_MIN_DURATION = 5.2
@@ -158,6 +160,25 @@ FIGHT_SFX_VOLUME = {
 }
 AUDIO_EXTENSIONS = (".wav", ".ogg", ".mp3")
 RADAR_SPLIT_X = 0.0
+MUSIC_TRACK_FILES = {
+    "lobby1": MUSIC_DIR / "lobby1",
+    "lobby2": MUSIC_DIR / "lobby2",
+    "battle1": MUSIC_DIR / "battle1",
+    "battle2": MUSIC_DIR / "battle2",
+    "battle3": MUSIC_DIR / "battle3",
+}
+MUSIC_GROUPS = {
+    "lobby": ("lobby1", "lobby2"),
+    "battle": ("battle1", "battle2", "battle3"),
+}
+MUSIC_TOTAL_CHANNELS = 32
+MUSIC_RESERVED_CHANNELS = len(MUSIC_TRACK_FILES)
+PRIORITY_SOUND_CHANNELS = 3
+RESERVED_MIXER_CHANNELS = MUSIC_RESERVED_CHANNELS + PRIORITY_SOUND_CHANNELS
+MUSIC_MASTER_VOLUME = 0.625
+MUSIC_FADE_SPEED = 1.55
+MUSIC_GROUP_FADE_MS = 700
+PRIORITY_SOUND_NAMES = {"ko", "round", "round_win", "fight_round_win", "fight_match_win"}
 
 MAGCAL_ACTIVE_STATES = {"REQUESTED", "START", "RUNNING"}
 MAGCAL_DONE_STATES = {"OK", "ERR", "RESET"}
@@ -926,15 +947,30 @@ class SoundBank:
         self.sounds = {}
         self.line_sounds = {}
         self.last_line_at = {}
+        self.music_sounds = {}
+        self.music_channels = {}
+        self.music_volumes = {}
+        self.music_active_group = ""
+        self.priority_channels = []
+        self.priority_channel_index = 0
         if not enabled:
             return
         try:
             if not pygame.mixer.get_init():
                 pygame.mixer.init(44100, -16, 2, 256)
+            pygame.mixer.set_num_channels(max(pygame.mixer.get_num_channels(), MUSIC_TOTAL_CHANNELS))
+            pygame.mixer.set_reserved(RESERVED_MIXER_CHANNELS)
+            for index, track in enumerate(MUSIC_TRACK_FILES):
+                self.music_channels[track] = pygame.mixer.Channel(index)
+                self.music_volumes[track] = 0.0
+            first_priority_channel = MUSIC_RESERVED_CHANNELS
+            for index in range(PRIORITY_SOUND_CHANNELS):
+                self.priority_channels.append(pygame.mixer.Channel(first_priority_channel + index))
             if ENABLE_PROCEDURAL_AUDIO_GENERATION:
                 self.ensure_generated_fight_audio()
             self.make_sounds()
             self.load_generated_fight_audio()
+            self.load_music()
         except Exception as exc:
             print(f"audio disabled: {exc}")
             self.enabled = False
@@ -1008,6 +1044,57 @@ class SoundBank:
             if sound is not None:
                 return sound
         return None
+
+    def load_music(self):
+        self.music_sounds.clear()
+        for name, path in MUSIC_TRACK_FILES.items():
+            sound = self.load_audio_file(path)
+            if sound is not None:
+                self.music_sounds[name] = sound
+
+    def music_group_for_track(self, track):
+        for group, tracks in MUSIC_GROUPS.items():
+            if track in tracks:
+                return group
+        return ""
+
+    def ensure_music_group(self, group):
+        next_tracks = set(MUSIC_GROUPS.get(group, ()))
+        for track in next_tracks:
+            sound = self.music_sounds.get(track)
+            channel = self.music_channels.get(track)
+            if sound is None or channel is None:
+                continue
+            if not channel.get_busy():
+                channel.play(sound, loops=-1)
+                channel.set_volume(self.music_volumes.get(track, 0.0))
+        self.music_active_group = group
+
+    def update_music(self, target_track, dt):
+        if not self.enabled:
+            return
+        if target_track not in self.music_sounds:
+            target_track = None
+        group = self.music_group_for_track(target_track) if target_track else ""
+        if group:
+            self.ensure_music_group(group)
+        else:
+            self.music_active_group = ""
+        group_tracks = set(MUSIC_GROUPS.get(group, ()))
+        step = MUSIC_FADE_SPEED * max(0.001, dt)
+        for track, channel in self.music_channels.items():
+            goal = MUSIC_MASTER_VOLUME if track == target_track else 0.0
+            if group and track not in group_tracks:
+                goal = 0.0
+            current = self.music_volumes.get(track, 0.0)
+            if current < goal:
+                current = min(goal, current + step)
+            elif current > goal:
+                current = max(goal, current - step)
+            self.music_volumes[track] = current
+            channel.set_volume(current)
+            if current <= 0.001 and track not in group_tracks and channel.get_busy():
+                channel.stop()
 
     def is_generated_voice_placeholder(self, cid, category, path):
         stem = path.stem.lower()
@@ -1338,8 +1425,35 @@ class SoundBank:
             return
         sound = self.sounds.get(name)
         if sound:
-            sound.set_volume(clamp(volume, 0.0, 1.0))
+            if name in PRIORITY_SOUND_NAMES:
+                self.play_priority_sound(sound, volume)
+                return
+            self.play_sound(sound, volume)
+
+    def play_priority_sound(self, sound, volume=1.0):
+        volume = clamp(volume, 0.0, 1.0)
+        for channel in self.priority_channels:
+            if not channel.get_busy():
+                channel.play(sound)
+                channel.set_volume(volume)
+                return
+        if not self.priority_channels:
+            self.play_sound(sound, volume)
+            return
+        channel = self.priority_channels[self.priority_channel_index % len(self.priority_channels)]
+        self.priority_channel_index += 1
+        channel.play(sound)
+        channel.set_volume(volume)
+
+    def play_sound(self, sound, volume=1.0):
+        volume = clamp(volume, 0.0, 1.0)
+        channel = pygame.mixer.find_channel(force=True)
+        if channel is None:
+            sound.set_volume(volume)
             sound.play()
+            return
+        channel.play(sound)
+        channel.set_volume(volume)
 
     def play_line(self, character_id, category, volume=1.0, cooldown=0.0):
         if not self.enabled:
@@ -1353,8 +1467,7 @@ class SoundBank:
         if not choices:
             return
         sound = random.choice(choices)
-        sound.set_volume(clamp(volume, 0.0, 1.0))
-        sound.play()
+        self.play_sound(sound, volume)
         self.last_line_at[key] = now
 
 
@@ -1430,6 +1543,8 @@ class SoupocalypseApp:
         self.icon_cache = {}
         self.bg_cache = None
         self.bg_cache_size = None
+        self.soup_placeholder_cache = None
+        self.soup_placeholder_cache_size = None
 
     def load_font(self, paths, size, fallback="arial", bold=False):
         for path in paths:
@@ -1662,6 +1777,25 @@ class SoupocalypseApp:
             FIGHT_VOICE_MASTER_VOLUME * extra,
             cooldown=cooldown,
         )
+
+    def desired_music_track(self):
+        if self.match_state in MENU_STATES:
+            selected = any(state.selected_index is not None for state in self.menu_players.values())
+            return "lobby2" if selected else "lobby1"
+        if self.match_state == "match_over":
+            return None
+        if self.match_state in ("playing", "round_over", "round_countdown"):
+            match_point = any(player.wins >= WIN_ROUNDS - 1 for player in self.players.values())
+            if (
+                match_point
+                and self.match_state == "playing"
+                and any(player.alive and player.hp <= 1 for player in self.players.values())
+            ):
+                return "battle3"
+            if match_point:
+                return "battle2"
+            return "battle1"
+        return "lobby1"
 
     def handle_serial_line(self, line):
         parts = [p.strip() for p in line.split(",")]
@@ -1923,7 +2057,7 @@ class SoupocalypseApp:
         if state is None:
             return
         now = time.time()
-        if action in (ACTION_BEAM, ACTION_BUBBLE) and state.selected_index is None:
+        if action == ACTION_BEAM and state.selected_index is None:
             index = state.hover_index
             if index is None or not (0 <= index < len(CHARACTER_SLOTS)):
                 self.menu_deny(state, "NO TARGET")
@@ -1947,6 +2081,9 @@ class SoupocalypseApp:
             self.shake(0.12, MENU_SHAKE_SELECT)
             if self.all_menu_players_selected():
                 self.start_menu_countdown()
+            return
+        if action == ACTION_BUBBLE and state.selected_index is None:
+            self.menu_deny(state, "NOT LOCKED")
             return
         if action in (ACTION_BEAM, ACTION_BUBBLE):
             old_index = state.selected_index
@@ -2146,20 +2283,23 @@ class SoupocalypseApp:
         self.pending_actions.clear()
         self.spawn_burst(loser.x, loser.y, PALETTE["soup"], 82, power=1.75)
         self.spawn_round_win_fx(winner, loser)
+        match_won = winner.wins >= WIN_ROUNDS
         self.sounds.play("ko")
-        self.play_fight_sound("fight_round_win")
-        self.play_character_line(winner, "victory", cooldown=1.0, extra=0.8)
+        if match_won:
+            self.play_fight_sound("fight_match_win")
+            self.play_character_line(winner, "victory", cooldown=0.0, extra=1.0)
+        else:
+            self.play_fight_sound("fight_round_win")
+            self.play_character_line(winner, "victory", cooldown=1.0, extra=0.8)
         self.add_screen_flash(winner.color, 0.20, 110)
         self.shake(0.24, FIGHT_SHAKE_KO)
         self.send_fx("ko")
-        if winner.wins >= WIN_ROUNDS:
+        if match_won:
             self.match_state = "match_over"
             self.round_message = f"{winner.label.upper()} WINS THE LAST BOWL"
             self.round_reset_at = now + MATCH_WIN_SCREEN_MIN_DURATION
             self.match_winner_id = winner.player_id
             self.match_win_started_at = now
-            self.play_fight_sound("fight_match_win")
-            self.play_character_line(winner, "victory", cooldown=0.0, extra=1.0)
             self.add_screen_flash(winner.color, 0.32, 150)
             self.shake(0.32, FIGHT_SHAKE_MATCH_WIN)
             self.send_fx("match_win")
@@ -2257,6 +2397,12 @@ class SoupocalypseApp:
                     self.calibration_select_until = 0.0
                     if self.send_player_command(player_id, "MAGCAL", MAGCAL_COMMAND_MS):
                         self.set_local_magcal_requested(player_id, MAGCAL_COMMAND_MS)
+                elif self.args.fake and event.key in (pygame.K_f, pygame.K_r, pygame.K_SLASH, pygame.K_RSHIFT) and self.match_state in MENU_STATES:
+                    player_id = 101 if event.key in (pygame.K_f, pygame.K_r) else 102
+                    action = ACTION_BEAM if event.key in (pygame.K_f, pygame.K_SLASH) else ACTION_BUBBLE
+                    player = self.players.get(player_id)
+                    if player:
+                        self.request_action(player, action)
                 elif event.key in (pygame.K_1, pygame.K_2) and self.match_state in MENU_STATES:
                     player_id = 101 if event.key == pygame.K_1 else 102
                     self.force_menu_lock(player_id)
@@ -2298,14 +2444,13 @@ class SoupocalypseApp:
                 player.heading = normalize_deg(player.heading - 180 * dt)
             if keys[aim_r]:
                 player.heading = normalize_deg(player.heading + 180 * dt)
-            if keys[beam_key] and not self.fake_actions[pid]:
-                self.fake_actions[pid] = ACTION_BEAM
-                self.request_action(player, ACTION_BEAM)
-            elif keys[bubble_key] and not self.fake_actions[pid]:
-                self.fake_actions[pid] = ACTION_BUBBLE
-                self.request_action(player, ACTION_BUBBLE)
-            elif not keys[beam_key] and not keys[bubble_key]:
-                self.fake_actions[pid] = ACTION_NONE
+            button_action = ACTION_BEAM if keys[beam_key] else ACTION_BUBBLE if keys[bubble_key] else ACTION_NONE
+            if self.match_state in MENU_STATES:
+                self.fake_actions[pid] = button_action
+                continue
+            if button_action != ACTION_NONE and self.fake_actions[pid] == ACTION_NONE:
+                self.request_action(player, button_action)
+            self.fake_actions[pid] = button_action
 
     def update(self, dt):
         now = time.time()
@@ -2356,6 +2501,7 @@ class SoupocalypseApp:
         self.update_fight_particles(dt, now)
         if now > self.shake_until:
             self.shake_power *= 0.85
+        self.sounds.update_music(self.desired_music_track(), dt)
 
     def update_character_select(self, dt, now):
         rects = self.menu_card_rects()
@@ -3753,6 +3899,55 @@ class SoupocalypseApp:
         size = (max(1, int(rendered.get_width() * scale)), max(1, int(rendered.get_height() * scale)))
         return pygame.transform.smoothscale(rendered, size)
 
+    def soup_placeholder_image(self, target_size):
+        target_size = (max(1, int(target_size[0])), max(1, int(target_size[1])))
+        if self.soup_placeholder_cache_size == target_size:
+            return self.soup_placeholder_cache
+        self.soup_placeholder_cache_size = target_size
+        self.soup_placeholder_cache = None
+        if not SOUP_PLACEHOLDER_SPRITE.exists():
+            return None
+        try:
+            surf = pygame.image.load(str(SOUP_PLACEHOLDER_SPRITE)).convert_alpha()
+            bounds = surf.get_bounding_rect(8)
+            if bounds.width > 0 and bounds.height > 0:
+                surf = surf.subsurface(bounds).copy()
+            scale = min(target_size[0] / surf.get_width(), target_size[1] / surf.get_height())
+            size = (
+                max(1, int(surf.get_width() * scale)),
+                max(1, int(surf.get_height() * scale)),
+            )
+            self.soup_placeholder_cache = pygame.transform.smoothscale(surf, size)
+        except pygame.error as exc:
+            self.log(f"soup placeholder failed: {exc}")
+        return self.soup_placeholder_cache
+
+    def draw_last_bowl_emblem(self, arena_rect):
+        emblem = pygame.Rect(0, 0, max(118, arena_rect.width // 10), max(68, arena_rect.height // 8))
+        emblem.center = (arena_rect.centerx, arena_rect.top + emblem.height // 2 + 14)
+        panel = emblem.inflate(22, 18)
+        self.draw_skew_panel(panel.move(0, 5), (0, 0, 0, 150), None, cut=12)
+        self.draw_skew_panel(panel, rgba(PALETTE["bg"], 196), rgba(PALETTE["soup_deep"], 210), cut=12, border_width=2)
+
+        image = self.soup_placeholder_image(emblem.size)
+        if image is not None:
+            self.screen.blit(image, image.get_rect(center=emblem.center))
+        else:
+            bowl = emblem.inflate(-8, -18)
+            pygame.draw.ellipse(self.screen, PALETTE["dark_brown"], bowl.inflate(10, 10))
+            pygame.draw.ellipse(self.screen, PALETTE["brown"], bowl)
+            pygame.draw.ellipse(self.screen, PALETTE["soup"], bowl.inflate(-16, -18))
+            for i in range(3):
+                x = bowl.centerx - 24 + i * 24
+                pygame.draw.arc(self.screen, rgba(PALETTE["light_brown"], 170), (x, bowl.top - 26, 20, 34), 3.7, 5.5, 2)
+
+        text = self.small_font.render("THE LAST BOWL", True, PALETTE["soup"])
+        label = text.get_rect(center=(arena_rect.centerx, panel.bottom + 13))
+        self.draw_skew_panel(label.inflate(22, 10), rgba(PALETTE["bg"], 185), rgba(PALETTE["light_brown"], 150), cut=7, border_width=1)
+        shadow = self.small_font.render("THE LAST BOWL", True, (0, 0, 0))
+        self.screen.blit(shadow, label.move(2, 2))
+        self.screen.blit(text, label)
+
     def draw_arena(self, offset):
         rect = self.world_rect().move(offset)
         shadow = rect.move(0, 10)
@@ -3780,16 +3975,7 @@ class SoupocalypseApp:
             sx, _ = self.world_to_screen(x, ARENA_MIN_Y, offset)
             pygame.draw.line(self.screen, PALETTE["coral"], (sx, inner.top), (sx, inner.bottom), 2)
 
-        bowl = pygame.Rect(0, 0, max(92, rect.width // 12), max(44, rect.height // 14))
-        bowl.center = (rect.centerx, rect.top + bowl.height // 2 + 16)
-        pygame.draw.ellipse(self.screen, PALETTE["dark_brown"], bowl.inflate(10, 10))
-        pygame.draw.ellipse(self.screen, PALETTE["brown"], bowl)
-        pygame.draw.ellipse(self.screen, PALETTE["soup"], bowl.inflate(-16, -18))
-        for i in range(3):
-            x = bowl.centerx - 24 + i * 24
-            pygame.draw.arc(self.screen, rgba(PALETTE["light_brown"], 170), (x, bowl.top - 26, 20, 34), 3.7, 5.5, 2)
-        text = self.small_font.render("THE LAST BOWL", True, PALETTE["light_brown"])
-        self.screen.blit(text, (bowl.centerx - text.get_width() // 2, bowl.bottom + 5))
+        self.draw_last_bowl_emblem(rect)
 
     def draw_radar_debug(self, offset):
         now = time.time()
