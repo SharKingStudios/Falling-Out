@@ -14,8 +14,7 @@ Soupocalypse is a hackathon-built physical fighting game where two players becom
 ![Soupocalypse gameplay](assets/battle.png)
 ![Player controllers](assets/controller1.png)
 ![Player controllers](assets/controller2.png)
-![Zine Poster](assets/Soupocalypse%20Zine%20Poster.pdf)
--->
+![Zine Poster](assets/Soupocalypse%20Zine%20Poster.png)
 
 ## What It Does
 
