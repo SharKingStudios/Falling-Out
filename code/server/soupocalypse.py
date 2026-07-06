@@ -56,6 +56,7 @@ BASE_DIR = Path(__file__).resolve().parent
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 SPRITE_DIR = BASE_DIR / "assets" / "sprites"
 GENERATED_AUDIO_DIR = BASE_DIR / "assets" / "generated_audio" / "fight"
+CEILING_SEAL_SPRITE = SPRITE_DIR / "ceiling_seal_plush.png"
 HELLS_BELLS_FONT = FONT_DIR / "Hells-Bells.otf"
 OUTFIT_FONT = FONT_DIR / "Outfit-latin.woff2"
 PLAYER_SPRITES = {
@@ -102,7 +103,7 @@ ENABLE_SCREEN_SHAKE = True
 ENABLE_HIT_STOP = True
 ENABLE_GENERATED_PARTICLES = True
 ENABLE_CHARACTER_ATTACK_DESCRIPTORS = True
-ENABLE_PROCEDURAL_AUDIO_GENERATION = True
+ENABLE_PROCEDURAL_AUDIO_GENERATION = False
 ENABLE_VICTORY_SCREEN = True
 FIGHT_MAX_PARTICLES = 1300
 FIGHT_SFX_MASTER_VOLUME = 0.96
@@ -155,6 +156,8 @@ FIGHT_SFX_VOLUME = {
     "fight_count_1": 0.90,
     "fight_count_go": 1.0,
 }
+AUDIO_EXTENSIONS = (".wav", ".ogg", ".mp3")
+RADAR_SPLIT_X = 0.0
 
 MAGCAL_ACTIVE_STATES = {"REQUESTED", "START", "RUNNING"}
 MAGCAL_DONE_STATES = {"OK", "ERR", "RESET"}
@@ -187,74 +190,74 @@ PALETTE = {
 CHARACTER_SLOTS = (
     {
         "id": "broth_beast",
-        "name": "Broth Beast",
+        "name": "Aarav",
         "portrait": SPRITE_DIR / "p1_temp.png",
         "theme": (55, 181, 118),
         "secondary": (255, 235, 173),
         "dark": (21, 77, 55),
         "highlight": (168, 255, 203),
         "accent": (255, 246, 122),
-        "tagline": "simmer guard",
-        "attack_type": "razor",
+        "tagline": "Zhifubao",
+        "attack_type": "payment",
     },
     {
         "id": "noodle_wyrm",
-        "name": "Noodle Wyrm",
+        "name": "Will",
         "portrait": SPRITE_DIR / "p2_temp.png",
         "theme": (255, 125, 112),
         "secondary": (255, 235, 173),
         "dark": (116, 39, 43),
         "highlight": (255, 204, 166),
         "accent": (255, 79, 86),
-        "tagline": "spice striker",
-        "attack_type": "torrent",
+        "tagline": "Builds",
+        "attack_type": "youtube",
     },
     {
         "id": "bloo",
-        "name": "Bloo",
+        "name": "Acon",
         "portrait": SPRITE_DIR / "bloo.png",
         "theme": (56, 201, 255),
         "secondary": (113, 255, 222),
         "dark": (18, 68, 107),
         "highlight": (223, 251, 255),
         "accent": (123, 145, 255),
-        "tagline": "cold snap",
+        "tagline": "Bloo",
         "attack_type": "emblem",
     },
     {
         "id": "party_cat",
-        "name": "Party Cat",
+        "name": "Tongyu",
         "portrait": SPRITE_DIR / "party-cat.png",
         "theme": (255, 205, 64),
         "secondary": (255, 105, 180),
         "dark": (126, 73, 20),
         "highlight": (255, 249, 178),
         "accent": (128, 255, 93),
-        "tagline": "festival fury",
-        "attack_type": "chain",
+        "tagline": "Ceiling!",
+        "attack_type": "ceiling",
     },
     {
         "id": "wasteland_wing",
-        "name": "Wasteland Wing",
+        "name": "Nathan",
         "portrait": SPRITE_DIR / "pigeon.png",
         "theme": (157, 132, 255),
         "secondary": (86, 226, 188),
         "dark": (54, 43, 112),
         "highlight": (232, 225, 255),
         "accent": (255, 96, 188),
-        "tagline": "scrap dive",
+        "tagline": "TODO",
         "attack_type": "fire",
     },
     {
         "id": "the_goat",
-        "name": "The Goat",
+        "name": "Zach Latta",
         "portrait": SPRITE_DIR / "the-goat.png",
         "theme": (255, 145, 48),
         "secondary": (82, 218, 128),
         "dark": (99, 48, 16),
         "highlight": (255, 222, 153),
         "accent": (255, 86, 56),
-        "tagline": "bowl bandit",
+        "tagline": "The Goat",
         "attack_type": "spiral",
     },
 )
@@ -349,6 +352,51 @@ ATTACK_PROFILES = {
         "hit_stop": HIT_IMPACT_DURATION * 0.9,
         "intensity": 1.0,
         "debug_name": "noodle-spiral",
+    },
+    "payment": {
+        "id": "payment",
+        "display_name": "Jirfubao Payment Blast",
+        "sound": "fight_razor",
+        "beam_shape": "payment_scan",
+        "muzzle": "scan_terminal",
+        "trail": "qr_money_glyphs",
+        "impact": "qr_approved",
+        "screen": "cyan_transaction_flash",
+        "camera_shake": 4.0,
+        "hit_shake": 10.0,
+        "hit_stop": HIT_IMPACT_DURATION,
+        "intensity": 1.08,
+        "debug_name": "payment-qr-scan",
+    },
+    "youtube": {
+        "id": "youtube",
+        "display_name": "Algorithm Engagement Cannon",
+        "sound": "fight_torrent",
+        "beam_shape": "youtube_feed",
+        "muzzle": "play_button_slam",
+        "trail": "engagement_icons",
+        "impact": "subscribe_crush",
+        "screen": "video_red_flash",
+        "camera_shake": 4.5,
+        "hit_shake": 10.5,
+        "hit_stop": HIT_IMPACT_DURATION * 0.95,
+        "intensity": 1.15,
+        "debug_name": "youtube-feed-blast",
+    },
+    "ceiling": {
+        "id": "ceiling",
+        "display_name": "Ceiling Seal Avalanche",
+        "sound": "fight_chain",
+        "beam_shape": "seal_avalanche",
+        "muzzle": "plush_cannon",
+        "trail": "seal_stampede",
+        "impact": "plush_pileup",
+        "screen": "bonk_avalanche",
+        "camera_shake": 4.0,
+        "hit_shake": 10.0,
+        "hit_stop": HIT_IMPACT_DURATION * 1.05,
+        "intensity": 1.16,
+        "debug_name": "ceiling-seal-avalanche",
     },
 }
 
@@ -454,6 +502,57 @@ ATTACK_STAGE_CONFIG = {
         "particleDensity": 1.16,
         "paletteFlashOpacity": 88,
         "effectLifetime": 0.46,
+    },
+    "payment": {
+        "attackId": "aarav_jirfubao_scan",
+        "attackType": "payment_scan_corridor",
+        "startupVisualDuration": 0.075,
+        "muzzleEffectType": "qr_terminal_crack",
+        "travelEffectType": "transaction_corridor",
+        "hitEffectType": "fake_qr_approved_burst",
+        "victimReactionType": "scan_box_currency_crawl",
+        "impactFrameMotif": "fake_qr_supermove",
+        "aftermathEffectType": "receipt_currency_confetti",
+        "missEffectType": "failed_payment_cloud",
+        "shieldBlockEffectType": "qr_shatter_on_glass",
+        "hitWord": "JIRFUBAO",
+        "particleDensity": 1.18,
+        "paletteFlashOpacity": 110,
+        "effectLifetime": 0.42,
+    },
+    "youtube": {
+        "attackId": "will_algorithm_cannon",
+        "attackType": "content_feed_beam",
+        "startupVisualDuration": 0.090,
+        "muzzleEffectType": "play_tile_slam",
+        "travelEffectType": "engagement_feed_stream",
+        "hitEffectType": "subscribe_play_tile_crush",
+        "victimReactionType": "video_ui_frame_echoes",
+        "impactFrameMotif": "smash_that_supercut",
+        "aftermathEffectType": "likes_comments_bells",
+        "missEffectType": "buffering_fragments",
+        "shieldBlockEffectType": "blocked_video_bend",
+        "hitWord": "SMASH THAT",
+        "particleDensity": 1.28,
+        "paletteFlashOpacity": 106,
+        "effectLifetime": 0.50,
+    },
+    "ceiling": {
+        "attackId": "tongyu_ceiling_avalanche",
+        "attackType": "seal_plush_avalanche",
+        "startupVisualDuration": 0.070,
+        "muzzleEffectType": "seal_cannon_pop",
+        "travelEffectType": "plush_stampede_corridor",
+        "hitEffectType": "seal_pileup_bonk",
+        "victimReactionType": "buried_in_ceiling",
+        "impactFrameMotif": "giant_seal_bonk",
+        "aftermathEffectType": "plush_bounce_cloud",
+        "missEffectType": "seal_skid_pile",
+        "shieldBlockEffectType": "seals_on_bubble",
+        "hitWord": "CEILING",
+        "particleDensity": 1.20,
+        "paletteFlashOpacity": 92,
+        "effectLifetime": 0.50,
     },
 }
 
@@ -883,6 +982,41 @@ class SoundBank:
         self.sounds["fight_count_1"] = self.menu_count_sound(180, 520, 0.22, 0.54)
         self.sounds["fight_count_go"] = self.menu_go_sound()
 
+    def audio_path_variants(self, path):
+        if path.suffix:
+            yield path
+            for ext in AUDIO_EXTENSIONS:
+                if path.suffix.lower() != ext:
+                    yield path.with_suffix(ext)
+            return
+        for ext in AUDIO_EXTENSIONS:
+            yield path.with_suffix(ext)
+
+    def load_audio_file(self, path):
+        for candidate in self.audio_path_variants(path):
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                return pygame.mixer.Sound(str(candidate))
+            except pygame.error as exc:
+                print(f"audio asset skipped: {candidate} ({exc})")
+        return None
+
+    def load_first_audio_file(self, paths):
+        for path in paths:
+            sound = self.load_audio_file(path)
+            if sound is not None:
+                return sound
+        return None
+
+    def is_generated_voice_placeholder(self, cid, category, path):
+        stem = path.stem.lower()
+        prefix = f"{cid}_{category}_"
+        if not stem.startswith(prefix):
+            return False
+        tail = stem[len(prefix):]
+        return len(tail) == 2 and tail.isdigit()
+
     def envelope(self, i, total):
         if total <= 1:
             return 0.0
@@ -1152,6 +1286,30 @@ class SoundBank:
 
     def load_generated_fight_audio(self):
         self.line_sounds.clear()
+        replacements = {
+            "count_3": [GENERATED_AUDIO_DIR / "ui" / "countdown_3"],
+            "count_2": [GENERATED_AUDIO_DIR / "ui" / "countdown_2"],
+            "count_1": [GENERATED_AUDIO_DIR / "ui" / "countdown_1"],
+            "count_go": [GENERATED_AUDIO_DIR / "ui" / "fight"],
+            "fight_count_3": [GENERATED_AUDIO_DIR / "ui" / "countdown_3"],
+            "fight_count_2": [GENERATED_AUDIO_DIR / "ui" / "countdown_2"],
+            "fight_count_1": [GENERATED_AUDIO_DIR / "ui" / "countdown_1"],
+            "fight_count_go": [GENERATED_AUDIO_DIR / "ui" / "fight"],
+            "ready": [GENERATED_AUDIO_DIR / "ui" / "fight"],
+            "fight_hit": [GENERATED_AUDIO_DIR / "impacts" / "hit_crack"],
+            "hit": [GENERATED_AUDIO_DIR / "impacts" / "hit_crack"],
+            "fight_shield_hit": [GENERATED_AUDIO_DIR / "impacts" / "shield_hit"],
+            "block": [GENERATED_AUDIO_DIR / "impacts" / "shield_hit"],
+            "round": [GENERATED_AUDIO_DIR / "rounds" / "round_win"],
+            "round_win": [GENERATED_AUDIO_DIR / "rounds" / "round_win"],
+            "fight_round_win": [GENERATED_AUDIO_DIR / "rounds" / "round_win"],
+            "fight_match_win": [GENERATED_AUDIO_DIR / "rounds" / "match_win"],
+        }
+        for key, paths in replacements.items():
+            sound = self.load_first_audio_file(paths)
+            if sound is not None:
+                self.sounds[key] = sound
+
         for character in CHARACTER_SLOTS:
             cid = character["id"]
             root = GENERATED_AUDIO_DIR / "characters" / cid
@@ -1161,7 +1319,15 @@ class SoundBank:
                 folder = root / category
                 if not folder.exists():
                     continue
-                for path in sorted(folder.glob("*.wav")):
+                paths = sorted(
+                    path for path in folder.iterdir()
+                    if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
+                )
+                custom_paths = [
+                    path for path in paths
+                    if not self.is_generated_voice_placeholder(cid, category, path)
+                ]
+                for path in (custom_paths or paths):
                     try:
                         self.line_sounds[key].append(pygame.mixer.Sound(str(path)))
                     except pygame.error:
@@ -1590,16 +1756,37 @@ class SoupocalypseApp:
             ARENA_MIN_X - 0.7 <= blob.x <= ARENA_MAX_X + 0.7 and
             ARENA_MIN_Y - 0.8 <= blob.y <= ARENA_MAX_Y + 0.8
         ]
-        active_players = [
-            player for player in self.players.values()
-            if player.rssi is not None and now - player.last_seen_at < PLAYER_PACKET_TIMEOUT
-        ]
-        if not blobs or not active_players:
+        if not blobs:
             return
-        pairs = self.assign_radar_blobs(active_players, blobs, now)
+        left_blobs = [blob for blob in blobs if blob.x <= RADAR_SPLIT_X]
+        right_blobs = [blob for blob in blobs if blob.x > RADAR_SPLIT_X]
+        pairs = []
+        p1_blob = self.choose_side_blob(self.players[101], left_blobs, now)
+        if p1_blob is not None:
+            pairs.append((self.players[101], p1_blob))
+        p2_blob = self.choose_side_blob(self.players[102], right_blobs, now)
+        if p2_blob is not None:
+            pairs.append((self.players[102], p2_blob))
 
         for player, blob in pairs:
             self.move_player_toward_blob(player, blob, now)
+
+    def choose_side_blob(self, player, blobs, now):
+        if not blobs:
+            return None
+        tracking_age = now - player.track_updated_at if player.track_updated_at else 999.0
+        predict_dt = clamp(tracking_age, 0.0, 0.22)
+        predicted_x = player.x + player.vx * predict_dt * 0.35
+        predicted_y = player.y + player.vy * predict_dt * 0.35
+        return min(
+            blobs,
+            key=lambda blob: (
+                math.hypot(blob.x - predicted_x, blob.y - predicted_y)
+                - (0.22 * max(0.35, player.track_confidence) if player.track_slot == blob.slot else 0.0),
+                blob.range_m,
+                blob.slot,
+            ),
+        )
 
     def assign_radar_blobs(self, active_players, blobs, now):
         players = sorted(active_players, key=lambda player: player.player_id)
@@ -2439,6 +2626,21 @@ class SoupocalypseApp:
             PALETTE["white"],
         )
 
+    def themed_particle_key(self, attack_type, role, index=0):
+        if attack_type == "payment":
+            return random.choice((
+                "fx:qr", "fx:qr", "fx:yen", "fx:yuan",
+                "fx:receipt", "fx:red_packet", "fx:check", "fx:scan",
+            ))
+        if attack_type == "youtube":
+            return random.choice((
+                "yt:play", "yt:play", "yt:triangle", "yt:like",
+                "yt:subscribe", "yt:comment", "yt:bell", "yt:timeline",
+            ))
+        if attack_type == "ceiling":
+            return "ceiling:seal" if role != "spark" or index % 4 else "ceiling:seal_face"
+        return None
+
     def spawn_startup_fx(self, player, start, direction):
         character = self.character_for_player(player)
         profile = self.attack_profile_for_player(player)
@@ -2455,6 +2657,8 @@ class SoupocalypseApp:
             kind=f"startup_{attack_type}", direction=direction,
         ))
         count = self.attack_particle_budget(profile, 18 if attack_type != "torrent" else 30)
+        if attack_type in ("payment", "youtube", "ceiling"):
+            count = self.attack_particle_budget(profile, 30 if attack_type != "ceiling" else 22)
         for i in range(count):
             angle = math.tau * i / count + random.uniform(-0.30, 0.30)
             orbit = random.uniform(0.14, 0.44)
@@ -2470,12 +2674,16 @@ class SoupocalypseApp:
                 "fire": "ember",
                 "spiral": "streak",
             }.get(attack_type, "diamond")
+            if attack_type in ("payment", "youtube", "ceiling"):
+                shape = "image" if i % 2 == 0 or attack_type == "ceiling" else random.choice(("pixel", "streak", "diamond"))
             sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            if shape == "image" and attack_type in ("payment", "youtube", "ceiling"):
+                sprite_key = self.themed_particle_key(attack_type, "startup", i)
             self.spawn_fight_particle(
                 px, py, vx, vy,
                 random.choice(self.attack_colors(character)),
-                random.uniform(0.018, 0.055),
-                random.uniform(0.10, 0.22),
+                random.uniform(0.018, 0.080 if attack_type in ("payment", "youtube") else 0.130),
+                random.uniform(0.10, 0.30 if attack_type in ("payment", "youtube", "ceiling") else 0.22),
                 shape=shape,
                 layer="back" if i % 3 == 0 else "front",
                 angle=math.atan2(dy, dx) + random.uniform(-1.0, 1.0),
@@ -2503,6 +2711,9 @@ class SoupocalypseApp:
             "chain": 72,
             "fire": 122,
             "spiral": 72,
+            "payment": 112,
+            "youtube": 118,
+            "ceiling": 118,
         }.get(attack_type, 58)
         count = self.attack_particle_budget(profile, base_count)
         colors = self.attack_colors(character)
@@ -2510,8 +2721,12 @@ class SoupocalypseApp:
             t = random.random()
             pressure_band = 0.65 + 0.35 * math.sin(t * math.tau * 3.0 + time.time() * 12.0)
             spread = 0.035 + t * 0.13
-            if attack_type in ("torrent", "fire"):
+            if attack_type in ("torrent", "fire", "youtube"):
                 spread *= 1.75 + 0.35 * pressure_band
+            if attack_type == "payment":
+                spread *= 1.35
+            if attack_type == "ceiling":
+                spread *= 2.15
             if attack_type == "spiral":
                 spread += abs(math.sin(t * math.tau * 3.0)) * 0.16
             px = sx + vx * t + nx * random.uniform(-spread, spread)
@@ -2548,7 +2763,24 @@ class SoupocalypseApp:
                 shape = random.choice(("diamond", "streak", "droplet"))
                 size = random.uniform(0.02, 0.068)
                 side += math.sin(t * math.tau * 4.0) * 0.65
+            elif attack_type == "payment":
+                shape = "image" if i % 2 == 0 else random.choice(("pixel", "streak", "diamond"))
+                size = random.uniform(0.026, 0.088)
+                life = random.uniform(0.18, 0.48)
+                alpha = 235.0 if i % 4 else 170.0
+            elif attack_type == "youtube":
+                shape = "image" if i % 2 == 0 else random.choice(("pixel", "streak", "diamond"))
+                size = random.uniform(0.032, 0.105)
+                life = random.uniform(0.16, 0.46)
+            elif attack_type == "ceiling":
+                shape = "image" if i % 3 != 0 else random.choice(("steam", "streak", "diamond"))
+                size = random.uniform(0.095, 0.230)
+                life = random.uniform(0.42, 1.05)
+                alpha = 255.0
+                side += math.sin(t * math.tau * 5.0) * 0.55
             sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            if shape == "image" and attack_type in ("payment", "youtube", "ceiling"):
+                sprite_key = self.themed_particle_key(attack_type, "travel", i)
             self.spawn_fight_particle(
                 px, py,
                 dx * forward + nx * side,
@@ -2596,16 +2828,25 @@ class SoupocalypseApp:
             elif attack_type == "spiral":
                 shape = random.choice(("streak", "droplet"))
                 side += math.sin(i * math.tau / max(1, count)) * 0.85
+            elif attack_type in ("payment", "youtube", "ceiling"):
+                shape = "image" if i % 2 == 0 or attack_type == "ceiling" else random.choice(("streak", "diamond", "pixel"))
             else:
                 shape = "streak"
             sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            if shape == "image" and attack_type in ("payment", "youtube", "ceiling"):
+                sprite_key = self.themed_particle_key(attack_type, "muzzle", i)
+            particle_size = random.uniform(0.025, 0.090)
+            particle_life = random.uniform(0.14, 0.36)
+            if attack_type == "ceiling":
+                particle_size = random.uniform(0.085, 0.210)
+                particle_life = random.uniform(0.38, 0.82)
             self.spawn_fight_particle(
                 sx - dx * random.uniform(0.0, 0.05), sy - dy * random.uniform(0.0, 0.05),
                 dx * power + nx * side,
                 dy * power + ny * side + (-0.25 if attack_type == "fire" else 0.0),
                 random.choice((character["theme"], character["secondary"], character["highlight"], character["accent"])),
-                random.uniform(0.025, 0.090),
-                random.uniform(0.14, 0.36),
+                particle_size,
+                particle_life,
                 shape=shape,
                 angle=math.atan2(dy, dx) + random.uniform(-0.35, 0.35),
                 spin=random.uniform(-16, 16),
@@ -2637,22 +2878,34 @@ class SoupocalypseApp:
                 "chain": "spark",
                 "fire": "steam",
                 "spiral": "streak",
+                "payment": "image",
+                "youtube": "image",
+                "ceiling": "image",
             }.get(attack_type, "diamond")
             sprite_key = f"{character['id']}:attack" if shape == "image" else None
+            if shape == "image" and attack_type in ("payment", "youtube", "ceiling"):
+                sprite_key = self.themed_particle_key(attack_type, "miss", i)
+            particle_size = random.uniform(0.018, 0.060) * ATTACK_MISS_BURST_SIZE
+            particle_life = random.uniform(0.20, 0.48)
+            particle_alpha = 175
+            if attack_type == "ceiling":
+                particle_size = random.uniform(0.085, 0.190)
+                particle_life = random.uniform(0.42, 0.92)
+                particle_alpha = 235
             self.spawn_fight_particle(
                 ex + nx * random.uniform(-0.10, 0.10),
                 ey + ny * random.uniform(-0.10, 0.10),
                 dx * back + nx * side,
                 dy * back + ny * side + (-0.25 if attack_type == "fire" else 0.0),
                 random.choice(self.attack_colors(character)),
-                random.uniform(0.018, 0.060) * ATTACK_MISS_BURST_SIZE,
-                random.uniform(0.20, 0.48),
+                particle_size,
+                particle_life,
                 shape=shape,
                 angle=math.atan2(dy, dx) + random.uniform(-1.0, 1.0),
                 spin=random.uniform(-12, 12),
                 gravity=-0.12 if attack_type in ("fire", "torrent") else 0.0,
                 sprite_key=sprite_key,
-                alpha=175,
+                alpha=particle_alpha,
             )
 
     def spawn_hit_presentation(self, attacker, target, hit_point, direction):
@@ -2677,6 +2930,9 @@ class SoupocalypseApp:
             "chain": 48,
             "fire": 66,
             "spiral": 46,
+            "payment": 78,
+            "youtube": 82,
+            "ceiling": 102,
         }.get(attack_type, 44))
         for i in range(count):
             angle = math.atan2(dy, dx) + random.uniform(-1.35, 1.35)
@@ -2702,15 +2958,31 @@ class SoupocalypseApp:
                 gravity = random.uniform(-0.30, -0.05)
             elif attack_type == "spiral":
                 shape = random.choice(("streak", "droplet", "diamond"))
+            elif attack_type == "payment":
+                shape = "image" if i % 2 == 0 else random.choice(("pixel", "streak", "diamond"))
+                sprite_key = self.themed_particle_key(attack_type, "hit", i) if shape == "image" else None
+            elif attack_type == "youtube":
+                shape = "image" if i % 2 == 0 else random.choice(("pixel", "streak", "diamond"))
+                sprite_key = self.themed_particle_key(attack_type, "hit", i) if shape == "image" else None
+            elif attack_type == "ceiling":
+                shape = "image" if i % 3 != 0 else random.choice(("steam", "streak", "diamond"))
+                sprite_key = self.themed_particle_key(attack_type, "hit", i) if shape == "image" else None
+                gravity = random.uniform(-0.06, 0.12)
+                speed *= 1.18
             origin_x = target.x + dx * random.uniform(-0.02, 0.18) + nx * random.uniform(-0.18, 0.18)
             origin_y = target.y + 0.22 + dy * random.uniform(-0.02, 0.18) + ny * random.uniform(-0.14, 0.14)
+            particle_size = random.uniform(0.020, 0.090)
+            particle_life = random.uniform(0.20, profile.get("effectLifetime", 0.42) + 0.18)
+            if attack_type == "ceiling":
+                particle_size = random.uniform(0.090, 0.240) if shape == "image" else random.uniform(0.035, 0.095)
+                particle_life = random.uniform(0.48, 1.10)
             self.spawn_fight_particle(
                 origin_x, origin_y,
                 math.cos(angle) * speed + dx * 0.45,
                 math.sin(angle) * speed + dy * 0.45,
                 random.choice(self.attack_colors(character)),
-                random.uniform(0.020, 0.090),
-                random.uniform(0.20, profile.get("effectLifetime", 0.42) + 0.18),
+                particle_size,
+                particle_life,
                 shape=shape,
                 layer="front",
                 angle=math.atan2(dy, dx) + random.uniform(-1.2, 1.2),
@@ -2789,21 +3061,33 @@ class SoupocalypseApp:
             elif attack_type == "spiral":
                 angle += math.sin(i) * 0.7
                 shape = random.choice(("streak", "droplet"))
+            elif attack_type in ("payment", "youtube", "ceiling"):
+                shape = "image" if i % 2 == 0 or attack_type == "ceiling" else random.choice(("spark", "diamond", "streak"))
             sprite_key = f"{attacker_character['id']}:hit" if shape == "image" else None
+            if shape == "image" and attack_type in ("payment", "youtube", "ceiling"):
+                sprite_key = self.themed_particle_key(attack_type, "block", i)
             color_pool = (PALETTE["bubble"], defender["highlight"], PALETTE["white"], attacker_character["theme"], attacker_character["accent"])
+            particle_size = random.uniform(0.018, 0.068)
+            particle_life = random.uniform(0.18, 0.48)
+            particle_alpha = 255.0
+            if attack_type == "ceiling":
+                particle_size = random.uniform(0.080, 0.185) if shape == "image" else random.uniform(0.028, 0.075)
+                particle_life = random.uniform(0.42, 0.88)
+                particle_alpha = 240.0
             self.spawn_fight_particle(
                 x + nx * random.uniform(-0.06, 0.06),
                 y + ny * random.uniform(-0.06, 0.06),
                 math.cos(angle) * speed + nx * random.uniform(-0.35, 0.35),
                 math.sin(angle) * speed + ny * random.uniform(-0.35, 0.35),
                 random.choice(color_pool),
-                random.uniform(0.018, 0.068),
-                random.uniform(0.18, 0.48),
+                particle_size,
+                particle_life,
                 shape=shape,
                 angle=math.atan2(dy, dx) + random.uniform(-1.0, 1.0),
                 spin=random.uniform(-14, 14),
                 gravity=-0.10 if attack_type == "fire" else 0.0,
                 sprite_key=sprite_key,
+                alpha=particle_alpha,
             )
 
     def spawn_round_win_fx(self, winner, loser):
@@ -3605,6 +3889,13 @@ class SoupocalypseApp:
                 p2 = (center[0] - contact_dx * radius * 0.82 - contact_dy * offset * 0.55, center[1] - contact_dy * radius * 0.82 + contact_dx * offset * 0.55)
                 color = splat.highlight if attack_type in ("chain", "emblem") else splat.color
                 pygame.draw.line(self.screen, rgba(color, 150 * frac), p1, p2, max(2, int(3 * frac)))
+            if attack_type == "payment":
+                self.draw_scan_brackets(center, radius * 0.72, splat.highlight, 135 * frac)
+                self.draw_currency_burst((center[0] - contact_dx * radius * 0.68, center[1] - contact_dy * radius * 0.68), radius * 0.35, splat, frac)
+            elif attack_type == "youtube":
+                self.draw_ui_bars((center[0] - contact_dx * radius * 0.42, center[1] - contact_dy * radius * 0.42), radius * 0.48, splat.color, frac)
+            elif attack_type == "ceiling":
+                self.draw_ceiling_splat((center[0] - contact_dx * radius * 0.52, center[1] - contact_dy * radius * 0.52), radius * 0.54, splat, frac, count=3)
 
     def draw_spiral_splat(self, center, splat, frac):
         points = []
@@ -3636,6 +3927,12 @@ class SoupocalypseApp:
             self.draw_broken_ring(center, splat.highlight, int(radius * 0.92), frac, splat.seed + 3, attack_type="emblem")
         elif attack_type == "spiral":
             self.draw_spiral_splat(center, splat, frac)
+        elif attack_type == "payment":
+            self.draw_payment_startup_splat(center, radius, splat, frac)
+        elif attack_type == "youtube":
+            self.draw_youtube_play_splat(center, radius * 1.15, frac, angle=-8, alpha=150)
+        elif attack_type == "ceiling":
+            self.draw_ceiling_splat(center, radius, splat, frac, count=3)
         else:
             self.draw_broken_ring(center, splat.highlight, int(radius), frac, splat.seed, direction=splat.direction, attack_type=attack_type)
 
@@ -3666,6 +3963,15 @@ class SoupocalypseApp:
             self.draw_blocky_burst(center, radius, splat, frac, count=14)
         elif attack_type == "spiral":
             self.draw_spiral_splat(center, splat, frac)
+        elif attack_type == "payment":
+            self.draw_scan_brackets(center, radius * 1.15, splat.highlight, 195 * frac)
+            self.draw_fake_qr_tile(center, radius * 0.82, splat.seed, frac, angle=time.time() * 120)
+        elif attack_type == "youtube":
+            self.draw_youtube_play_splat(center, radius * 1.28, frac, angle=math.degrees(math.atan2(dy, dx)), alpha=210)
+            self.draw_ui_bars(center, radius, splat.color, frac)
+        elif attack_type == "ceiling":
+            self.draw_starburst(center, radius * 1.15, PALETTE["white"], 90 * frac, seed=splat.seed)
+            self.draw_ceiling_splat(center, radius * 1.10, splat, frac, count=5)
 
     def draw_attack_hit_splat(self, center, splat, frac, attack_type, blocked=False):
         radius = self.meters_to_px(splat.radius) * (0.75 + 0.55 * (1 - frac))
@@ -3717,6 +4023,17 @@ class SoupocalypseApp:
                 rect = pygame.Rect(0, 0, arc_radius * 2, arc_radius * 2)
                 rect.center = center
                 pygame.draw.arc(self.screen, rgba(splat.highlight, 150 * frac), rect, time.time() * 4 + i, time.time() * 4 + i + 2.7, max(2, int(5 * frac)))
+        elif attack_type == "payment":
+            self.draw_fake_qr_tile(center, radius * 1.16, splat.seed, frac, angle=time.time() * 260)
+            self.draw_scan_brackets(center, radius * 1.30, splat.highlight, 210 * frac)
+            self.draw_currency_burst(center, radius, splat, frac)
+        elif attack_type == "youtube":
+            self.draw_youtube_play_splat(center, radius * 1.34, frac, angle=-6 + time.time() * 80, alpha=220)
+            self.draw_ui_bars(center, radius * 1.18, splat.color, frac)
+            self.draw_starburst(center, radius * 0.92, PALETTE["white"], 90 * frac, seed=splat.seed)
+        elif attack_type == "ceiling":
+            self.draw_starburst(center, radius * 1.28, splat.highlight, 100 * frac, seed=splat.seed)
+            self.draw_ceiling_splat(center, radius * 1.20, splat, frac, count=8)
 
     def draw_victim_reaction_splat(self, center, splat, frac, attack_type):
         radius = self.meters_to_px(splat.radius) * (0.90 + 0.14 * math.sin(time.time() * 18))
@@ -3752,6 +4069,15 @@ class SoupocalypseApp:
             pygame.draw.circle(self.screen, rgba(splat.highlight, 72 * frac), center, int(radius * 0.62), max(1, int(4 * frac)))
         elif attack_type == "spiral":
             self.draw_spiral_splat(center, splat, frac)
+        elif attack_type == "payment":
+            self.draw_scan_brackets(center, radius * 0.86, splat.highlight, 170 * frac)
+            self.draw_fake_qr_tile(center, radius * 0.52, splat.seed, frac * 0.86, angle=0)
+            self.draw_currency_burst(center, radius * 0.72, splat, frac * 0.75)
+        elif attack_type == "youtube":
+            self.draw_ui_bars(center, radius * 0.95, splat.color, frac)
+            self.draw_youtube_play_splat(center, radius * 0.72, frac, angle=0, alpha=150)
+        elif attack_type == "ceiling":
+            self.draw_ceiling_splat(center, radius * 0.92, splat, frac, count=5)
 
     def draw_miss_splat(self, center, splat, frac, attack_type):
         radius = self.meters_to_px(splat.radius) * (0.65 + 0.45 * (1 - frac))
@@ -3761,6 +4087,13 @@ class SoupocalypseApp:
             self.draw_spiral_splat(center, splat, frac * 0.75)
         elif attack_type == "emblem":
             self.draw_starburst(center, radius * 0.72, splat.color, 75 * frac, seed=splat.seed)
+        elif attack_type == "payment":
+            self.draw_scan_brackets(center, radius, splat.highlight, 130 * frac)
+            self.draw_currency_burst(center, radius * 0.72, splat, frac * 0.65)
+        elif attack_type == "youtube":
+            self.draw_buffering_splat(center, radius, splat, frac)
+        elif attack_type == "ceiling":
+            self.draw_ceiling_splat(center, radius * 0.92, splat, frac * 0.8, count=4)
         else:
             self.draw_broken_ring(center, splat.highlight, int(radius), frac * 0.75, splat.seed, direction=splat.direction, attack_type=attack_type)
 
@@ -3774,6 +4107,111 @@ class SoupocalypseApp:
             rect = pygame.Rect(0, 0, size, size)
             rect.center = (center[0] + math.cos(angle) * dist, center[1] + math.sin(angle) * dist * 0.78)
             pygame.draw.rect(self.screen, rgba(rng.choice(colors), 130 * frac), rect)
+
+    def draw_payment_startup_splat(self, center, radius, splat, frac):
+        self.draw_fake_qr_tile(center, radius * 0.95, splat.seed, frac, angle=-8 + time.time() * 90)
+        self.draw_scan_brackets(center, radius * 1.25, splat.highlight, 185 * frac)
+        self.draw_currency_burst(center, radius * 0.70, splat, frac * 0.75)
+
+    def draw_fake_qr_tile(self, center, radius, seed, frac, angle=0.0):
+        side = max(24, int(radius * 2))
+        surf = pygame.Surface((side, side), pygame.SRCALPHA)
+        rng = random.Random(seed)
+        navy = (5, 22, 52)
+        blue = (0, 160, 233)
+        cyan = (83, 231, 255)
+        pygame.draw.rect(surf, rgba(navy, 225 * frac), (0, 0, side, side), border_radius=max(3, side // 14))
+        pygame.draw.rect(surf, rgba(blue, 215 * frac), (side * 0.06, side * 0.06, side * 0.88, side * 0.88), max(2, side // 18), border_radius=max(2, side // 18))
+        cells = 13
+        pad = side * 0.14
+        cell = (side - pad * 2) / cells
+        for gy in range(cells):
+            for gx in range(cells):
+                finder = (gx < 4 and gy < 4) or (gx > cells - 5 and gy < 4) or (gx < 4 and gy > cells - 5)
+                if finder or rng.random() > 0.55:
+                    color = PALETTE["white"] if finder or rng.random() > 0.34 else cyan
+                    jitter = 0.76 + 0.22 * math.sin(time.time() * 22 + gx * 2.1 + gy * 1.3)
+                    rect = pygame.Rect(pad + gx * cell, pad + gy * cell, max(1, cell * jitter), max(1, cell * jitter))
+                    pygame.draw.rect(surf, rgba(color, 215 * frac), rect)
+        img = pygame.transform.rotozoom(surf, angle, 1.0)
+        self.screen.blit(img, img.get_rect(center=center), special_flags=pygame.BLEND_ADD)
+
+    def draw_scan_brackets(self, center, radius, color, alpha):
+        cx, cy = center
+        arm = radius * 0.36
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            x = cx + sx * radius
+            y = cy + sy * radius
+            pygame.draw.line(self.screen, rgba(color, alpha), (x, y), (x - sx * arm, y), max(2, int(radius * 0.06)))
+            pygame.draw.line(self.screen, rgba(color, alpha), (x, y), (x, y - sy * arm), max(2, int(radius * 0.06)))
+
+    def draw_currency_burst(self, center, radius, splat, frac):
+        rng = random.Random(splat.seed + 99)
+        labels = ("YEN", "CNY", "OK", "PAY")
+        for i in range(8):
+            angle = rng.random() * math.tau
+            dist = radius * rng.uniform(0.25, 1.22)
+            label = self.small_font.render(rng.choice(labels), True, splat.highlight if i % 2 else splat.color)
+            label.set_alpha(channel(145 * frac))
+            pos = (center[0] + math.cos(angle) * dist, center[1] + math.sin(angle) * dist * 0.76)
+            self.screen.blit(label, label.get_rect(center=pos))
+            size = rng.randint(4, 10)
+            pygame.draw.rect(self.screen, rgba(splat.highlight, 125 * frac), (pos[0] - size * 0.5, pos[1] - size * 0.5, size, size))
+
+    def draw_youtube_play_splat(self, center, radius, frac, angle=0.0, alpha=210):
+        surf = pygame.Surface((max(2, int(radius * 2.0)), max(2, int(radius * 1.25))), pygame.SRCALPHA)
+        red = (255, 0, 0)
+        rect = surf.get_rect()
+        pygame.draw.rect(surf, rgba((16, 16, 16), alpha * 0.65 * frac), rect.move(4, 5), border_radius=max(4, rect.height // 4))
+        pygame.draw.rect(surf, rgba(red, alpha * frac), rect.inflate(-4, -4), border_radius=max(4, rect.height // 4))
+        tri = [
+            (rect.centerx - rect.width * 0.12, rect.centery - rect.height * 0.23),
+            (rect.centerx - rect.width * 0.12, rect.centery + rect.height * 0.23),
+            (rect.centerx + rect.width * 0.24, rect.centery),
+        ]
+        pygame.draw.polygon(surf, rgba(PALETTE["white"], 240 * frac), tri)
+        img = pygame.transform.rotozoom(surf, angle, 1.0)
+        self.screen.blit(img, img.get_rect(center=center), special_flags=pygame.BLEND_ADD)
+
+    def draw_ui_bars(self, center, radius, color, frac):
+        cx, cy = center
+        for i in range(5):
+            y = cy + (i - 2) * radius * 0.18
+            length = radius * (0.75 + 0.18 * i)
+            pygame.draw.line(self.screen, rgba((18, 18, 18), 110 * frac), (cx - length * 0.55, y + 5), (cx + length * 0.55, y + 5), max(3, int(8 * frac)))
+            pygame.draw.line(self.screen, rgba(color if i % 2 else PALETTE["white"], 155 * frac), (cx - length * 0.55, y), (cx + length * 0.55, y), max(2, int(5 * frac)))
+        self.draw_youtube_play_splat((cx - radius * 0.48, cy - radius * 0.35), radius * 0.28, frac, angle=-12, alpha=160)
+        self.draw_youtube_play_splat((cx + radius * 0.52, cy + radius * 0.30), radius * 0.22, frac, angle=14, alpha=135)
+
+    def draw_buffering_splat(self, center, radius, splat, frac):
+        rng = random.Random(splat.seed)
+        for i in range(12):
+            angle = i * math.tau / 12 + time.time() * 4.4
+            r = radius * 0.58
+            alpha = 35 + 135 * ((i + int(time.time() * 10)) % 12) / 11
+            pygame.draw.circle(self.screen, rgba(splat.color if i % 2 else PALETTE["white"], alpha * frac), (int(center[0] + math.cos(angle) * r), int(center[1] + math.sin(angle) * r)), rng.randint(3, 8))
+        self.draw_ui_bars(center, radius * 0.75, splat.color, frac * 0.7)
+
+    def draw_ceiling_splat(self, center, radius, splat, frac, count=5):
+        rng = random.Random(splat.seed + int(time.time() * 8))
+        seal = self.fx_icon_surface("ceiling", "seal")
+        pop = clamp(frac / 0.30, 0.0, 1.0)
+        alpha_frac = 1.0 if frac > 0.30 else pop * pop
+        pop_scale = 1.0 + (1.0 - alpha_frac) * 0.34
+        for i in range(count):
+            angle = rng.random() * math.tau
+            dist = radius * rng.uniform(0.05, 0.88)
+            scale = (0.44 + rng.random() * 0.48) * pop_scale
+            img = pygame.transform.rotozoom(seal, rng.uniform(-35, 35), scale)
+            img.set_alpha(channel(240 * alpha_frac))
+            pos = (center[0] + math.cos(angle) * dist, center[1] + math.sin(angle) * dist * 0.72)
+            self.screen.blit(img, img.get_rect(center=pos))
+        for i in range(10):
+            angle = rng.random() * math.tau
+            dist = radius * rng.uniform(0.20, 1.18)
+            pygame.draw.circle(self.screen, rgba((220, 210, 190), 70 * alpha_frac), (int(center[0] + math.cos(angle) * dist), int(center[1] + math.sin(angle) * dist * 0.80)), rng.randint(5, 18))
+            if i % 3 == 0:
+                self.draw_starburst((center[0] + math.cos(angle) * dist, center[1] + math.sin(angle) * dist * 0.8), rng.uniform(8, 18), splat.highlight, 100 * alpha_frac, seed=splat.seed + i)
 
     def draw_fight_particles(self, offset, below):
         now = time.time()
@@ -3822,13 +4260,135 @@ class SoupocalypseApp:
         self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
 
     def draw_fight_icon_particle(self, particle, center, frac):
-        character_id, kind = particle.sprite_key.split(":", 1)
-        character = self.character_by_id(character_id)
-        icon = self.generated_icon_surface(character, kind)
-        scale = max(0.12, particle.size * 5.8 * (0.65 + frac))
+        family, kind = particle.sprite_key.split(":", 1) if ":" in particle.sprite_key else ("fx", particle.sprite_key)
+        if family in ("fx", "yt", "ceiling"):
+            icon = self.fx_icon_surface(family, kind)
+            if family == "ceiling":
+                pop = clamp(frac / 0.28, 0.0, 1.0)
+                alpha_frac = 1.0 if frac > 0.28 else pop * pop
+                pop_scale = 1.0 + (1.0 - alpha_frac) * 0.38
+                scale = max(0.16, particle.size * 5.2 * (0.95 + 0.08 * math.sin((1.0 - frac) * math.pi)) * pop_scale)
+            else:
+                alpha_frac = frac
+                scale = max(0.10, particle.size * 5.8 * (0.65 + frac))
+        else:
+            character = self.character_by_id(family)
+            icon = self.generated_icon_surface(character, kind)
+            alpha_frac = frac
+            scale = max(0.12, particle.size * 5.8 * (0.65 + frac))
         img = pygame.transform.rotozoom(icon, math.degrees(particle.angle), scale)
-        img.set_alpha(channel(230 * frac))
+        img.set_alpha(channel(particle.alpha * alpha_frac))
         self.screen.blit(img, img.get_rect(center=center))
+
+    def fx_icon_surface(self, family, kind):
+        key = ("fx_icon", family, kind)
+        if key in self.icon_cache:
+            return self.icon_cache[key]
+        if family == "ceiling":
+            surf = self.ceiling_seal_surface(kind)
+            self.icon_cache[key] = surf
+            return surf
+        surf = pygame.Surface((GENERATED_ICON_SIZE, GENERATED_ICON_SIZE), pygame.SRCALPHA)
+        w = h = GENERATED_ICON_SIZE
+        if family == "fx":
+            blue = (0, 160, 233)
+            cyan = (83, 231, 255)
+            navy = (5, 22, 52)
+            red = (239, 47, 47)
+            if kind == "qr":
+                pygame.draw.rect(surf, rgba(navy, 230), (6, 6, w - 12, h - 12), border_radius=8)
+                pygame.draw.rect(surf, rgba(blue, 245), (10, 10, w - 20, h - 20), border_radius=6)
+                rng = random.Random(4242)
+                cell = 5
+                for gy in range(7, 56, cell):
+                    for gx in range(7, 56, cell):
+                        if rng.random() > 0.48:
+                            pygame.draw.rect(surf, rgba(PALETTE["white"] if rng.random() > 0.25 else cyan, 235), (gx, gy, cell - 1, cell - 1))
+                for x, y in ((11, 11), (43, 11), (11, 43)):
+                    pygame.draw.rect(surf, navy, (x, y, 14, 14))
+                    pygame.draw.rect(surf, PALETTE["white"], (x + 3, y + 3, 8, 8))
+                    pygame.draw.rect(surf, blue, (x + 5, y + 5, 4, 4))
+            elif kind in ("yen", "yuan"):
+                text = "\u00a5" if kind == "yen" else "CNY"
+                pygame.draw.circle(surf, rgba(cyan, 230), (w // 2, h // 2), 26)
+                pygame.draw.circle(surf, rgba(navy, 230), (w // 2, h // 2), 28, 4)
+                label = self.big_font.render(text, True, PALETTE["white"])
+                label = pygame.transform.smoothscale(label, (min(44, label.get_width()), min(32, label.get_height())))
+                surf.blit(label, label.get_rect(center=(w // 2, h // 2)))
+            elif kind == "receipt":
+                pygame.draw.polygon(surf, rgba(PALETTE["white"], 235), [(18, 7), (50, 13), (44, 58), (11, 52)])
+                for y in (18, 28, 38, 48):
+                    pygame.draw.line(surf, blue, (20, y), (42, y + 3), 3)
+            elif kind == "red_packet":
+                pygame.draw.rect(surf, rgba(red, 240), (15, 12, 36, 44), border_radius=6)
+                pygame.draw.circle(surf, rgba((255, 220, 90), 245), (33, 34), 12)
+                glyph = self.small_font.render("YEN", True, navy)
+                surf.blit(glyph, glyph.get_rect(center=(33, 34)))
+            elif kind == "check":
+                pygame.draw.rect(surf, rgba(blue, 230), (10, 14, 44, 36), border_radius=10)
+                pygame.draw.line(surf, PALETTE["white"], (20, 34), (29, 43), 7)
+                pygame.draw.line(surf, PALETTE["white"], (29, 43), (46, 22), 7)
+            else:
+                self.draw_bracket_icon(surf, blue, cyan)
+        elif family == "yt":
+            red = (255, 0, 0)
+            dark = (18, 18, 18)
+            if kind in ("play", "triangle"):
+                if kind == "play":
+                    pygame.draw.rect(surf, rgba(red, 245), (8, 16, 48, 32), border_radius=10)
+                    triangle = [(29, 24), (29, 40), (43, 32)]
+                else:
+                    triangle = [(17, 14), (17, 50), (51, 32)]
+                pygame.draw.polygon(surf, PALETTE["white"], triangle)
+                pygame.draw.rect(surf, rgba(dark, 110), (8, 16, 48, 32), 3, border_radius=10)
+            elif kind == "like":
+                pygame.draw.polygon(surf, rgba((54, 143, 255), 245), [(22, 31), (30, 18), (38, 20), (36, 29), (50, 29), (46, 51), (22, 51)])
+                pygame.draw.rect(surf, PALETTE["white"], (13, 32, 9, 20), border_radius=3)
+            elif kind == "subscribe":
+                pygame.draw.rect(surf, rgba(red, 245), (5, 19, 54, 26), border_radius=13)
+                label = self.small_font.render("SUB", True, PALETTE["white"])
+                surf.blit(label, label.get_rect(center=(32, 32)))
+            elif kind == "comment":
+                pygame.draw.rect(surf, rgba(PALETTE["white"], 240), (10, 14, 44, 30), border_radius=7)
+                pygame.draw.polygon(surf, rgba(PALETTE["white"], 240), [(25, 43), (32, 54), (36, 43)])
+                for x in (22, 32, 42):
+                    pygame.draw.circle(surf, red, (x, 29), 3)
+            elif kind == "bell":
+                pygame.draw.arc(surf, rgba((255, 218, 76), 245), (18, 14, 28, 32), math.pi, math.tau, 6)
+                pygame.draw.line(surf, rgba((255, 218, 76), 245), (18, 31), (46, 31), 6)
+                pygame.draw.circle(surf, PALETTE["white"], (32, 49), 5)
+            else:
+                pygame.draw.rect(surf, rgba(red, 240), (8, 28, 48, 8), border_radius=4)
+                pygame.draw.circle(surf, PALETTE["white"], (42, 32), 7)
+        self.icon_cache[key] = surf
+        return surf
+
+    def draw_bracket_icon(self, surf, color, accent):
+        for x, sx in ((10, 1), (54, -1)):
+            pygame.draw.line(surf, color, (x, 15), (x + sx * 13, 15), 5)
+            pygame.draw.line(surf, color, (x, 49), (x + sx * 13, 49), 5)
+            pygame.draw.line(surf, color, (x, 15), (x, 28), 5)
+            pygame.draw.line(surf, color, (x, 49), (x, 36), 5)
+        pygame.draw.line(surf, accent, (15, 32), (49, 32), 4)
+
+    def ceiling_seal_surface(self, kind):
+        try:
+            if CEILING_SEAL_SPRITE.exists():
+                surf = pygame.image.load(str(CEILING_SEAL_SPRITE)).convert_alpha()
+                bounds = surf.get_bounding_rect(8)
+                if bounds.width > 0 and bounds.height > 0:
+                    surf = surf.subsurface(bounds).copy()
+                target = (96, 64) if kind != "seal_face" else (70, 54)
+                return pygame.transform.smoothscale(surf, target)
+        except pygame.error as exc:
+            self.log(f"seal art failed: {exc}")
+        surf = pygame.Surface((96, 64), pygame.SRCALPHA)
+        pygame.draw.ellipse(surf, (210, 215, 216), (6, 10, 82, 42))
+        pygame.draw.ellipse(surf, (145, 152, 154), (18, 16, 42, 22), 3)
+        pygame.draw.circle(surf, (20, 24, 26), (72, 27), 4)
+        pygame.draw.circle(surf, (20, 24, 26), (84, 27), 4)
+        pygame.draw.arc(surf, (40, 42, 42), (70, 30, 16, 12), 0.2, 2.8, 2)
+        return surf
 
     def generated_icon_surface(self, character, kind):
         key = (character["id"], kind)
@@ -3886,6 +4446,12 @@ class SoupocalypseApp:
             self.draw_pixel_fire_beam(start, end, character, beam, frac)
         elif shape == "spiral_ribbon":
             self.draw_spiral_beam(start, end, character, beam, frac)
+        elif shape == "payment_scan":
+            self.draw_payment_beam(start, end, character, beam, frac)
+        elif shape == "youtube_feed":
+            self.draw_youtube_beam(start, end, character, beam, frac)
+        elif shape == "seal_avalanche":
+            self.draw_ceiling_beam(start, end, character, beam, frac)
         else:
             self.draw_simple_beam(start, end, beam.color, frac)
         if beam.hit_point:
@@ -3900,6 +4466,14 @@ class SoupocalypseApp:
         dx = vx / length
         dy = vy / length
         return dx, dy, -dy, dx, length
+
+    def beam_quad_points(self, start, end, nx, ny, width_start, width_end):
+        return [
+            (start[0] + nx * width_start, start[1] + ny * width_start),
+            (end[0] + nx * width_end, end[1] + ny * width_end),
+            (end[0] - nx * width_end, end[1] - ny * width_end),
+            (start[0] - nx * width_start, start[1] - ny * width_start),
+        ]
 
     def draw_simple_beam(self, start, end, color, frac):
         glow = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
@@ -4076,6 +4650,121 @@ class SoupocalypseApp:
             pygame.draw.lines(surf, rgba(color, 215 * frac), False, points, width)
             pygame.draw.lines(surf, rgba(character["highlight"], 175 * frac), False, points, 2)
         self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_payment_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        rng = random.Random(int(beam.created_at * 1000) + int(time.time() * 18))
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        navy = (5, 22, 52)
+        blue = (0, 160, 233)
+        cyan = (83, 231, 255)
+        outer = self.beam_quad_points(start, end, nx, ny, 34 * frac, 54 * frac)
+        inner = self.beam_quad_points(start, end, nx, ny, 19 * frac, 32 * frac)
+        core = self.beam_quad_points(start, end, nx, ny, 5 * frac, 8 * frac)
+        pygame.draw.polygon(surf, rgba(navy, 185 * frac), outer)
+        pygame.draw.polygon(surf, rgba(blue, 150 * frac), inner)
+        pygame.draw.polygon(surf, rgba(PALETTE["white"], 215 * frac), core)
+        phase = (time.time() - beam.created_at) * 3.4
+        for i in range(9):
+            t = (i / 9 + phase) % 1.0
+            cx = start[0] + dx * length * t
+            cy = start[1] + dy * length * t
+            half = lerp(22, 48, t) * frac
+            pygame.draw.line(surf, rgba(cyan, 120 * frac), (cx - nx * half, cy - ny * half), (cx + nx * half, cy + ny * half), max(2, int(5 * frac)))
+        for i in range(54):
+            t = rng.random()
+            half = lerp(16, 44, t)
+            side = rng.uniform(-half, half)
+            size = rng.randint(3, 9)
+            cx = start[0] + dx * length * t + nx * side
+            cy = start[1] + dy * length * t + ny * side
+            color = PALETTE["white"] if rng.random() > 0.48 else cyan if rng.random() > 0.35 else blue
+            pygame.draw.rect(surf, rgba(color, rng.randint(80, 190) * frac), (cx - size / 2, cy - size / 2, size, size))
+        for t in (0.15, 0.42, 0.70):
+            cx = start[0] + dx * length * t + nx * math.sin(time.time() * 11 + t) * 18
+            cy = start[1] + dy * length * t + ny * math.sin(time.time() * 11 + t) * 18
+            self.draw_scan_brackets_on(surf, (cx, cy), 18 + int(12 * frac), cyan, 96 * frac)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
+    def draw_youtube_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        rng = random.Random(int(beam.created_at * 1000) + int(time.time() * 20))
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        red = (255, 0, 0)
+        dark = (18, 18, 18)
+        pygame.draw.polygon(surf, rgba(dark, 190 * frac), self.beam_quad_points(start, end, nx, ny, 30 * frac, 44 * frac))
+        for i in range(5):
+            side = (i - 2) * 13
+            p1 = (start[0] + nx * side, start[1] + ny * side)
+            p2 = (end[0] + nx * side * 1.25, end[1] + ny * side * 1.25)
+            pygame.draw.line(surf, rgba(red if i != 2 else PALETTE["white"], (160 if i != 2 else 220) * frac), p1, p2, max(3, int((10 if i != 2 else 5) * frac)))
+        phase = (time.time() - beam.created_at) * 5.5
+        for i in range(8):
+            t = (i / 8 + phase) % 1.0
+            cx = start[0] + dx * length * t
+            cy = start[1] + dy * length * t
+            width = lerp(36, 70, t) * frac
+            pygame.draw.line(surf, rgba(PALETTE["white"], 85 * frac), (cx - nx * width, cy - ny * width), (cx + nx * width, cy + ny * width), 3)
+            pygame.draw.circle(surf, rgba(red, 145 * frac), (int(cx), int(cy)), max(3, int(6 * frac)))
+        for i in range(16):
+            t = rng.random()
+            side = rng.uniform(-40, 40)
+            cx = start[0] + dx * length * t + nx * side
+            cy = start[1] + dy * length * t + ny * side
+            rect = pygame.Rect(0, 0, rng.randint(18, 42), rng.randint(10, 22))
+            rect.center = (cx, cy)
+            pygame.draw.rect(surf, rgba(red if i % 2 else PALETTE["white"], 95 * frac), rect, border_radius=4)
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+        icon = self.fx_icon_surface("yt", "play")
+        for i in range(6):
+            t = (i + ((time.time() - beam.created_at) * 4.8 % 1.0)) / 6
+            if t > 1:
+                t -= 1
+            cx = start[0] + dx * length * t + nx * math.sin(t * math.tau * 2) * 22
+            cy = start[1] + dy * length * t + ny * math.sin(t * math.tau * 2) * 22
+            img = pygame.transform.rotozoom(icon, math.degrees(math.atan2(dy, dx)) + rng.uniform(-12, 12), 0.36 + 0.18 * math.sin(t * math.pi))
+            img.set_alpha(channel(205 * frac))
+            self.screen.blit(img, img.get_rect(center=(cx, cy)))
+
+    def draw_ceiling_beam(self, start, end, character, beam, frac):
+        dx, dy, nx, ny, length = self.beam_basis(start, end)
+        rng = random.Random(int(beam.created_at * 1200) + int(time.time() * 10))
+        surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        alpha_frac = max(0.45, frac)
+        for i in range(24):
+            t = rng.random()
+            side = rng.uniform(-60, 60)
+            p1 = (start[0] + dx * length * t + nx * side - dx * rng.uniform(28, 80), start[1] + dy * length * t + ny * side - dy * rng.uniform(28, 80))
+            p2 = (p1[0] + dx * rng.uniform(58, 150), p1[1] + dy * rng.uniform(58, 150))
+            pygame.draw.line(surf, rgba(character["dark"], 85 * alpha_frac), p1, p2, rng.randint(3, 9))
+            pygame.draw.line(surf, rgba(PALETTE["white"], 60 * alpha_frac), p1, p2, 2)
+        for i in range(30):
+            t = rng.random()
+            half = lerp(18, 55, t)
+            cx = start[0] + dx * length * t + nx * rng.uniform(-half, half)
+            cy = start[1] + dy * length * t + ny * rng.uniform(-half, half)
+            pygame.draw.circle(surf, rgba((215, 205, 190), 58 * alpha_frac), (int(cx), int(cy)), rng.randint(6, 20))
+        self.screen.blit(surf, (0, 0), special_flags=pygame.BLEND_ADD)
+        seal = self.fx_icon_surface("ceiling", "seal")
+        for i in range(26):
+            t = (i / 26 + (time.time() - beam.created_at) * 1.8) % 1.0
+            wave = math.sin(t * math.tau * 4.0 + i)
+            side = wave * 48 + rng.uniform(-24, 24)
+            cx = start[0] + dx * length * t + nx * side
+            cy = start[1] + dy * length * t + ny * side
+            scale = (0.42 + 0.48 * rng.random()) * (0.78 + 0.22 * frac)
+            img = pygame.transform.rotozoom(seal, math.degrees(math.atan2(dy, dx)) + rng.uniform(-38, 38), scale)
+            img.set_alpha(channel(240 * alpha_frac))
+            self.screen.blit(img, img.get_rect(center=(cx, cy)))
+
+    def draw_scan_brackets_on(self, surf, center, radius, color, alpha):
+        cx, cy = center
+        arm = radius * 0.48
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            x = cx + sx * radius
+            y = cy + sy * radius
+            pygame.draw.line(surf, rgba(color, alpha), (x, y), (x - sx * arm, y), 4)
+            pygame.draw.line(surf, rgba(color, alpha), (x, y), (x, y - sy * arm), 4)
 
     def draw_slash_head(self, end, dx, dy, color, frac):
         nx, ny = -dy, dx
@@ -4645,7 +5334,47 @@ class SoupocalypseApp:
             shadow.fill(rgba(fg, 170), special_flags=pygame.BLEND_RGBA_MULT)
             self.screen.blit(shadow, text_rect.move(5, 6))
             self.screen.blit(text, text_rect)
-        if attack_type == "chain":
+        if attack_type == "payment":
+            self.draw_fake_qr_tile((hx, hy), 86 + 54 * frac, frame_index + 701, 1.0, angle=frame_index * 18)
+            self.draw_scan_brackets((hx, hy), 124 + 42 * frac, accent, 230)
+            for i, label in enumerate(("SCAN", "PAY", "YEN", "APPROVED")):
+                stamp = self.small_font.render(label, True, accent if i % 2 else fg)
+                stamp = pygame.transform.rotozoom(stamp, -18 + i * 11, 1.3)
+                self.screen.blit(stamp, stamp.get_rect(center=(hx + nx * (90 + i * 18) - dx * (40 + i * 24), hy + ny * (58 - i * 22) - dy * (40 + i * 24))))
+            for i in range(8):
+                offset = (i - 3.5) * 46
+                p1 = (hx - dx * 330 + nx * offset, hy - dy * 330 + ny * offset)
+                p2 = (hx + dx * 260 + nx * offset * 0.12, hy + dy * 260 + ny * offset * 0.12)
+                pygame.draw.line(self.screen, accent, p1, p2, 5 if i % 2 else 9)
+                pygame.draw.line(self.screen, fg, p1, p2, 2)
+        elif attack_type == "youtube":
+            self.draw_youtube_play_splat((hx, hy), 132 + 52 * frac, 1.0, angle=-7 + frame_index * 4, alpha=255)
+            pygame.draw.line(self.screen, accent, (hx - dx * 420 - nx * 180, hy - dy * 420 - ny * 180), (hx + dx * 420 + nx * 180, hy + dy * 420 + ny * 180), 18)
+            pygame.draw.line(self.screen, fg, (hx - dx * 380 - nx * 160, hy - dy * 380 - ny * 160), (hx + dx * 380 + nx * 160, hy + dy * 380 + ny * 160), 6)
+            for i, label in enumerate(("LIKE", "SUB", "BELL", "COMMENT")):
+                stamp = self.small_font.render(label, True, fg if i % 2 else accent)
+                stamp = pygame.transform.rotozoom(stamp, -14 + i * 8, 1.45)
+                self.screen.blit(stamp, stamp.get_rect(center=(hx - nx * (130 - i * 78) + dx * (20 + i * 18), hy - ny * (78 - i * 36) + dy * (20 + i * 18))))
+            for i in range(7):
+                rect = pygame.Rect(0, 0, 82 + i * 8, 34 + (i % 2) * 12)
+                rect.center = (hx + math.cos(i) * 180 * frac, hy + math.sin(i * 1.7) * 120 * frac)
+                pygame.draw.rect(self.screen, accent if i % 2 else fg, rect, 4, border_radius=6)
+        elif attack_type == "ceiling":
+            self.draw_starburst((hx, hy), 150 + 56 * frac, accent, 230, seed=frame_index + 7)
+            seal = self.fx_icon_surface("ceiling", "seal")
+            giant = pygame.transform.rotozoom(seal, -12 + frame_index * 5, 2.2 + 0.45 * frac)
+            giant.set_alpha(245)
+            self.screen.blit(giant, giant.get_rect(center=(hx + dx * 42, hy + dy * 24)))
+            for i in range(12):
+                angle = i * math.tau / 12 + frame_index * 0.18
+                pos = (hx + math.cos(angle) * (88 + 104 * frac), hy + math.sin(angle) * (58 + 76 * frac))
+                baby = pygame.transform.rotozoom(seal, math.degrees(angle) + 90, 0.38 + 0.18 * (i % 3))
+                baby.set_alpha(230)
+                self.screen.blit(baby, baby.get_rect(center=pos))
+            bonk = self.small_font.render("BONK", True, fg)
+            bonk = pygame.transform.rotozoom(bonk, 10, 1.8)
+            self.screen.blit(bonk, bonk.get_rect(center=(hx - nx * 108, hy - ny * 76)))
+        elif attack_type == "chain":
             rng = random.Random(frame_index + 44)
             for _ in range(8):
                 x1 = hx + rng.uniform(-120, 120)
