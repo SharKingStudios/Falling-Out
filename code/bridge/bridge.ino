@@ -38,6 +38,15 @@
 #define RADAR_RX_PIN 16
 #define RADAR_TX_PIN 17
 #define RADAR_BAUD 256000
+#define RADAR_AUTO_BAUD 0
+
+const uint32_t RADAR_BAUDS[] = {RADAR_BAUD, 115200, 230400, 9600};
+const uint8_t RADAR_BAUD_COUNT = sizeof(RADAR_BAUDS) / sizeof(RADAR_BAUDS[0]);
+const uint8_t RADAR_RX_PINS[] = {RADAR_RX_PIN, RADAR_TX_PIN};
+const uint8_t RADAR_TX_PINS[] = {RADAR_TX_PIN, RADAR_RX_PIN};
+const uint8_t RADAR_PIN_MODE_COUNT = sizeof(RADAR_RX_PINS) / sizeof(RADAR_RX_PINS[0]);
+const uint32_t RADAR_STATUS_INTERVAL_MS = 500;
+const uint32_t RADAR_AUTO_BAUD_INTERVAL_MS = 2600;
 
 const uint8_t LIGHT_RELAY_PIN = 25;
 const uint8_t FAN_RELAY_PIN = 26;
@@ -106,6 +115,39 @@ uint8_t broadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 uint16_t commandSequence = 0;
 uint8_t radarBuffer[96];
 uint8_t radarLen = 0;
+uint8_t radarBaudIndex = 0;
+uint8_t radarPinModeIndex = 0;
+uint32_t radarCurrentBaud = RADAR_BAUD;
+uint32_t radarBaudStartedAt = 0;
+uint32_t radarRxBytes = 0;
+uint32_t radarBytesSinceBaud = 0;
+uint32_t radarValidFrames = 0;
+uint32_t radarBadFrames = 0;
+uint32_t radarDroppedBytes = 0;
+uint32_t radarLastByteAt = 0;
+uint32_t radarLastValidAt = 0;
+uint32_t radarLastStatusAt = 0;
+uint8_t radarRecentBytes[12];
+uint8_t radarRecentIndex = 0;
+uint8_t radarRecentCount = 0;
+
+void beginRadar(uint32_t baud);
+
+struct PendingPlayerRx {
+  bool pending;
+  PlayerPacket packet;
+  int rssi;
+};
+
+struct PendingMagCalRx {
+  bool pending;
+  PlayerMagCalPacket packet;
+  int rssi;
+};
+
+PendingPlayerRx pendingPlayers[2];
+PendingMagCalRx pendingMagCals[2];
+portMUX_TYPE espNowMux = portMUX_INITIALIZER_UNLOCKED;
 
 uint32_t lightOffAt = 0;
 uint32_t fanOffAt = 0;
@@ -252,6 +294,18 @@ void handleSerialLine(String line) {
       return;
     }
     sendPlayerCommand(targetId, command, valueMs);
+  } else if (parts[0] == "RADARBAUD" && count >= 2) {
+    uint32_t baud = (uint32_t)parts[1].toInt();
+    if (baud > 0) {
+      for (uint8_t i = 0; i < RADAR_BAUD_COUNT; i++) {
+        if (RADAR_BAUDS[i] == baud) radarBaudIndex = i;
+      }
+      beginRadar(baud);
+    }
+  } else if (parts[0] == "RADARPINS" && count >= 2) {
+    parts[1].toUpperCase();
+    radarPinModeIndex = parts[1] == "SWAP" || parts[1] == "SWAPPED" || parts[1] == "1" ? 1 : 0;
+    beginRadar(radarCurrentBaud);
   }
 }
 
@@ -284,10 +338,50 @@ int16_t signedSpeed(uint8_t lo, uint8_t hi) {
   return (hi & 0x80) ? value : -value;
 }
 
-void parseRadarFrame(uint8_t *buf, uint8_t len) {
-  if (len < 30) return;
-  if (buf[0] != 0xAA || buf[1] != 0xFF || buf[2] != 0x03 || buf[3] != 0x00) return;
-  if (buf[len - 2] != 0x55 || buf[len - 1] != 0xCC) return;
+void printHexByte(uint8_t value) {
+  if (value < 16) Serial.print("0");
+  Serial.print(value, HEX);
+}
+
+void printRecentRadarBytes() {
+  uint8_t count = radarRecentCount;
+  uint8_t start = (radarRecentIndex + 12 - count) % 12;
+  for (uint8_t i = 0; i < count; i++) {
+    printHexByte(radarRecentBytes[(start + i) % 12]);
+  }
+}
+
+void rememberRadarByte(uint8_t b) {
+  radarRecentBytes[radarRecentIndex] = b;
+  radarRecentIndex = (radarRecentIndex + 1) % 12;
+  if (radarRecentCount < 12) radarRecentCount++;
+}
+
+void beginRadar(uint32_t baud) {
+  Serial2.end();
+  delay(20);
+  radarCurrentBaud = baud;
+  radarBaudStartedAt = millis();
+  radarBytesSinceBaud = 0;
+  radarLen = 0;
+  radarRecentIndex = 0;
+  radarRecentCount = 0;
+  Serial2.setRxBufferSize(1024);
+  Serial2.begin(radarCurrentBaud, SERIAL_8N1, RADAR_RX_PINS[radarPinModeIndex], RADAR_TX_PINS[radarPinModeIndex]);
+  Serial.print("RADAR_BAUD,");
+  Serial.print(radarCurrentBaud);
+  Serial.print(",rx=");
+  Serial.print(RADAR_RX_PINS[radarPinModeIndex]);
+  Serial.print(",tx=");
+  Serial.println(RADAR_TX_PINS[radarPinModeIndex]);
+}
+
+bool parseRadarFrame(uint8_t *buf, uint8_t len) {
+  if (len < 30) return false;
+  if (buf[0] != 0xAA || buf[1] != 0xFF || buf[2] != 0x03 || buf[3] != 0x00) return false;
+  if (buf[len - 2] != 0x55 || buf[len - 1] != 0xCC) return false;
+  radarValidFrames++;
+  radarLastValidAt = millis();
   for (uint8_t target = 0; target < 3; target++) {
     uint8_t *raw = &buf[4 + target * 8];
     int16_t x = signedAxis(raw[0], raw[1]);
@@ -305,20 +399,91 @@ void parseRadarFrame(uint8_t *buf, uint8_t len) {
     Serial.print(",");
     Serial.println(resolution);
   }
+  return true;
+}
+
+void resetRadarParser(uint8_t nextByte) {
+  radarLen = 0;
+  if (nextByte == 0xAA) {
+    radarBuffer[radarLen++] = nextByte;
+  }
 }
 
 void readRadar() {
   while (Serial2.available()) {
     uint8_t b = (uint8_t)Serial2.read();
-    if (radarLen == 0 && b != 0xAA) continue;
+    radarRxBytes++;
+    radarBytesSinceBaud++;
+    radarLastByteAt = millis();
+    rememberRadarByte(b);
+    if (radarLen == 0 && b != 0xAA) {
+      radarDroppedBytes++;
+      continue;
+    }
     radarBuffer[radarLen++] = b;
-    if (radarLen >= 2 && radarBuffer[radarLen - 2] == 0x55 && radarBuffer[radarLen - 1] == 0xCC) {
-      parseRadarFrame(radarBuffer, radarLen);
+
+    if (radarLen == 2 && radarBuffer[1] != 0xFF) {
+      radarBadFrames++;
+      resetRadarParser(b);
+    } else if (radarLen == 4 && (radarBuffer[2] != 0x03 || radarBuffer[3] != 0x00)) {
+      radarBadFrames++;
+      resetRadarParser(b);
+    } else if (radarLen >= 2 && radarBuffer[radarLen - 2] == 0x55 && radarBuffer[radarLen - 1] == 0xCC) {
+      if (!parseRadarFrame(radarBuffer, radarLen)) {
+        radarBadFrames++;
+      }
       radarLen = 0;
     } else if (radarLen >= sizeof(radarBuffer)) {
+      radarBadFrames++;
       radarLen = 0;
     }
   }
+}
+
+void maybeCycleRadarBaud() {
+#if RADAR_AUTO_BAUD
+  if (radarValidFrames > 0) return;
+  uint32_t now = millis();
+  if (now - radarBaudStartedAt < RADAR_AUTO_BAUD_INTERVAL_MS) return;
+  radarBaudIndex = (radarBaudIndex + 1) % RADAR_BAUD_COUNT;
+  if (radarBaudIndex == 0) {
+    radarPinModeIndex = (radarPinModeIndex + 1) % RADAR_PIN_MODE_COUNT;
+  }
+  beginRadar(RADAR_BAUDS[radarBaudIndex]);
+#endif
+}
+
+void printRadarStatus() {
+  uint32_t now = millis();
+  if (now - radarLastStatusAt < RADAR_STATUS_INTERVAL_MS) return;
+  radarLastStatusAt = now;
+  int32_t byteAge = radarLastByteAt ? (int32_t)(now - radarLastByteAt) : -1;
+  int32_t validAge = radarLastValidAt ? (int32_t)(now - radarLastValidAt) : -1;
+  Serial.print("RADAR_STATUS,");
+  Serial.print(radarCurrentBaud);
+  Serial.print(",");
+  Serial.print(radarRxBytes);
+  Serial.print(",");
+  Serial.print(radarValidFrames);
+  Serial.print(",");
+  Serial.print(radarBadFrames);
+  Serial.print(",");
+  Serial.print(radarDroppedBytes);
+  Serial.print(",");
+  Serial.print(byteAge);
+  Serial.print(",");
+  Serial.print(validAge);
+  Serial.print(",");
+  Serial.print(radarLen);
+  Serial.print(",");
+  Serial.print(radarBytesSinceBaud);
+  Serial.print(",");
+  printRecentRadarBytes();
+  Serial.print(",");
+  Serial.print(RADAR_RX_PINS[radarPinModeIndex]);
+  Serial.print(",");
+  Serial.print(RADAR_TX_PINS[radarPinModeIndex]);
+  Serial.println();
 }
 
 void printPlayerPacket(const PlayerPacket &packet, int rssi) {
@@ -374,6 +539,12 @@ void printMagCalPacket(const PlayerMagCalPacket &packet, int rssi) {
   Serial.println(rssi);
 }
 
+int playerQueueIndex(uint8_t playerId) {
+  if (playerId == 101) return 0;
+  if (playerId == 102) return 1;
+  return -1;
+}
+
 void handleEspNowData(const uint8_t *data, int len, int rssi) {
   if (len < 3) return;
   uint16_t magic = 0;
@@ -383,11 +554,47 @@ void handleEspNowData(const uint8_t *data, int len, int rssi) {
   if (packetType == PACKET_TYPE_PLAYER && len == sizeof(PlayerPacket)) {
     PlayerPacket packet;
     memcpy(&packet, data, sizeof(packet));
-    printPlayerPacket(packet, rssi);
+    int index = playerQueueIndex(packet.playerId);
+    if (index < 0) return;
+    portENTER_CRITICAL(&espNowMux);
+    pendingPlayers[index].packet = packet;
+    pendingPlayers[index].rssi = rssi;
+    pendingPlayers[index].pending = true;
+    portEXIT_CRITICAL(&espNowMux);
   } else if (packetType == PACKET_TYPE_MAGCAL && len == sizeof(PlayerMagCalPacket)) {
     PlayerMagCalPacket packet;
     memcpy(&packet, data, sizeof(packet));
-    printMagCalPacket(packet, rssi);
+    int index = playerQueueIndex(packet.playerId);
+    if (index < 0) return;
+    portENTER_CRITICAL(&espNowMux);
+    pendingMagCals[index].packet = packet;
+    pendingMagCals[index].rssi = rssi;
+    pendingMagCals[index].pending = true;
+    portEXIT_CRITICAL(&espNowMux);
+  }
+}
+
+void flushEspNowPackets() {
+  for (uint8_t i = 0; i < 2; i++) {
+    PendingPlayerRx playerCopy = {};
+    PendingMagCalRx magCopy = {};
+    portENTER_CRITICAL(&espNowMux);
+    if (pendingPlayers[i].pending) {
+      playerCopy = pendingPlayers[i];
+      pendingPlayers[i].pending = false;
+    }
+    if (pendingMagCals[i].pending) {
+      magCopy = pendingMagCals[i];
+      pendingMagCals[i].pending = false;
+    }
+    portEXIT_CRITICAL(&espNowMux);
+
+    if (playerCopy.pending) {
+      printPlayerPacket(playerCopy.packet, playerCopy.rssi);
+    }
+    if (magCopy.pending) {
+      printMagCalPacket(magCopy.packet, magCopy.rssi);
+    }
   }
 }
 
@@ -465,19 +672,22 @@ void updateFx() {
 
 void setup() {
   Serial.begin(115200);
-  Serial2.begin(RADAR_BAUD, SERIAL_8N1, RADAR_RX_PIN, RADAR_TX_PIN);
   setupFx();
   delay(250);
   Serial.println();
   Serial.print("BRIDGE_BOOT,reset_reason=");
   Serial.println((int)esp_reset_reason());
   Serial.println("Soupocalypse bridge ready");
+  beginRadar(RADAR_BAUD);
   setupEspNow();
 }
 
 void loop() {
-  readLaptopSerial();
   readRadar();
+  flushEspNowPackets();
+  readLaptopSerial();
+  maybeCycleRadarBaud();
+  printRadarStatus();
   updateFx();
-  delay(2);
+  delay(1);
 }

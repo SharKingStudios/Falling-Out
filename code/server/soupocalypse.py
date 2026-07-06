@@ -31,7 +31,7 @@ BEAM_WIDTH_M = 0.68
 BEAM_AIM_ASSIST_DEG = 20.0
 BUBBLE_RADIUS_M = 0.62
 BUBBLE_DURATION = 0.70
-BEAM_COOLDOWN = 0.82
+BEAM_COOLDOWN = 1.64
 BUBBLE_COOLDOWN = 1.10
 ROUND_RESET_DELAY = 1.8
 HIT_IMPACT_DURATION = 0.150
@@ -49,6 +49,22 @@ TRACK_SNAP_DISTANCE_M = 1.15
 RSSI_TRUST_DB = 7.0
 RSSI_RANK_PENALTY_M = 0.62
 START_SIDE_BIAS_M = 1.10
+SKIP_TARGET_LOCK = True
+RADAR_LOCK_MIN_CONFIDENCE = 0.20
+RADAR_LOCK_RECENT_S = 1.05
+RADAR_LOCK_DRAW_RECENT_S = 2.4
+RADAR_LOCK_HOLD_S = 0.60
+RADAR_LOCK_CENTER_DEADZONE_M = 0.45
+RADAR_LOCK_PAIR_SYNC_S = 0.35
+RADAR_LOCK_MIN_SEPARATION_M = 0.90
+FORWARD_CALIBRATION_TITLE_DURATION = 2.0
+FORWARD_CALIBRATION_POINT_DURATION = 3.0
+FORWARD_CALIBRATION_DONE_DURATION = 0.85
+FORWARD_CALIBRATION_TOTAL = (
+    FORWARD_CALIBRATION_TITLE_DURATION
+    + FORWARD_CALIBRATION_POINT_DURATION
+    + FORWARD_CALIBRATION_DONE_DURATION
+)
 MAX_HP = 3
 WIN_ROUNDS = 2
 TARGET_FPS = 60
@@ -58,7 +74,7 @@ FONT_DIR = BASE_DIR / "assets" / "fonts"
 SPRITE_DIR = BASE_DIR / "assets" / "sprites"
 GENERATED_AUDIO_DIR = BASE_DIR / "assets" / "generated_audio" / "fight"
 MUSIC_DIR = BASE_DIR / "assets" / "music"
-SOUP_PLACEHOLDER_SPRITE = SPRITE_DIR / "soup.jpg"
+SOUP_PLACEHOLDER_SPRITE = SPRITE_DIR / "soup.png"
 CEILING_SEAL_SPRITE = SPRITE_DIR / "ceiling_seal_plush.png"
 HELLS_BELLS_FONT = FONT_DIR / "Hells-Bells.otf"
 OUTFIT_FONT = FONT_DIR / "Outfit-latin.woff2"
@@ -242,14 +258,14 @@ CHARACTER_SLOTS = (
     },
     {
         "id": "bloo",
-        "name": "Acon",
+        "name": "Cisco",
         "portrait": SPRITE_DIR / "bloo.png",
         "theme": (56, 201, 255),
         "secondary": (113, 255, 222),
         "dark": (18, 68, 107),
         "highlight": (223, 251, 255),
         "accent": (123, 145, 255),
-        "tagline": "Bloo",
+        "tagline": "Beatboxin'",
         "attack_type": "emblem",
     },
     {
@@ -723,6 +739,7 @@ class Player:
     y: float
     heading: float
     character_id: str = "broth_beast"
+    raw_heading: float = 0.0
     vx: float = 0.0
     vy: float = 0.0
     hp: int = MAX_HP
@@ -1528,6 +1545,8 @@ class SoupocalypseApp:
         self.logs = []
         self.running = True
         self.debug_radar = args.debug_radar
+        self.radar_status_seen_at = 0.0
+        self.radar_status = {}
         self.match_state = "select"
         self.round_message = "CHOOSE YOUR SOUP FIGHTER"
         self.round_reset_at = 0.0
@@ -1541,12 +1560,22 @@ class SoupocalypseApp:
         self.round_presentation_started_at = 0.0
         self.round_countdown_started_at = 0.0
         self.round_countdown_last_step = -1
+        self.forward_calibration_started_at = 0.0
+        self.forward_calibration_last_step = -1
+        self.forward_calibration_applied = False
+        self.radar_lock_started_at = 0.0
+        self.radar_lock_ready_since = 0.0
+        self.radar_lock_next_state = "menu"
+        self.radar_lock_transitioning = False
+        self.radar_lock_last_sound_at = 0.0
+        self.menu_ignore_actions_until = 0.0
         self.match_win_started_at = 0.0
         self.hp_flash_until = {101: 0.0, 102: 0.0}
         self.pending_actions = []
         self.last_tick = time.time()
         self.fake_actions = {101: 0, 102: 0}
         self.fake_last_heading = {101: 90.0, 102: -90.0}
+        self.heading_zero_offsets = {101: 0.0, 102: 0.0}
         self.calibration_select_until = 0.0
         self.mag_cal_status = {}
         self.sprite_cache = {}
@@ -1569,6 +1598,8 @@ class SoupocalypseApp:
         self.bg_cache_size = None
         self.soup_placeholder_cache = None
         self.soup_placeholder_cache_size = None
+        if not args.fake:
+            self.start_radar_lock("menu")
 
     def load_font(self, paths, size, fallback="arial", bold=False):
         for path in paths:
@@ -1701,11 +1732,47 @@ class SoupocalypseApp:
         self.apply_menu_character_choices()
         for player in self.players.values():
             player.wins = 0
-        self.reset_round()
+        self.reset_round(start_playing=False)
+        self.begin_round_setup()
 
     def start_next_round_countdown(self):
-        now = time.time()
         self.reset_round(start_playing=False)
+        self.begin_round_setup()
+
+    def begin_round_setup(self):
+        self.start_forward_calibration()
+
+    def start_radar_lock(self, next_state="round"):
+        if SKIP_TARGET_LOCK:
+            if next_state == "menu":
+                self.open_character_select(require_radar_lock=False)
+            else:
+                self.start_forward_calibration()
+            return
+
+        now = time.time()
+        self.match_state = "radar_lock"
+        self.round_message = "STEP INTO START ZONES"
+        self.radar_lock_started_at = now
+        self.radar_lock_ready_since = 0.0
+        self.radar_lock_next_state = next_state
+        self.radar_lock_transitioning = False
+        self.radar_lock_last_sound_at = 0.0
+        self.add_screen_flash(PALETTE["soup"], 0.16, 72)
+        self.shake(0.12, 5.0)
+
+    def start_forward_calibration(self):
+        now = time.time()
+        self.match_state = "forward_calibration"
+        self.round_message = "CALIBRATION TIME"
+        self.forward_calibration_started_at = now
+        self.forward_calibration_last_step = -1
+        self.forward_calibration_applied = False
+        self.add_screen_flash(PALETTE["soup"], 0.18, 86)
+        self.shake(0.16, 7.0)
+
+    def start_fight_countdown(self):
+        now = time.time()
         self.match_state = "round_countdown"
         self.round_message = "NEXT ROUND"
         self.round_countdown_started_at = now
@@ -1722,7 +1789,149 @@ class SoupocalypseApp:
         self.add_screen_flash(PALETTE["white"], 0.16, 120)
         self.shake(0.18, 8.0)
 
-    def open_character_select(self):
+    def radar_lock_zone(self, player_id):
+        if player_id == 101:
+            return ARENA_MIN_X - 0.08, RADAR_SPLIT_X - RADAR_LOCK_CENTER_DEADZONE_M, ARENA_MIN_Y - 0.08, ARENA_MAX_Y + 0.08
+        return RADAR_SPLIT_X + RADAR_LOCK_CENTER_DEADZONE_M, ARENA_MAX_X + 0.08, ARENA_MIN_Y - 0.08, ARENA_MAX_Y + 0.08
+
+    def player_in_radar_lock_zone(self, player):
+        x1, x2, y1, y2 = self.radar_lock_zone(player.player_id)
+        return x1 <= player.x <= x2 and y1 <= player.y <= y2
+
+    def live_radar_blobs(self, now, max_age=RADAR_BLOB_TIMEOUT, margin_x=0.7, margin_y=0.8):
+        return sorted(
+            (
+                blob for blob in self.radar_blobs.values()
+                if blob.resolution > 0
+                and 0.0 <= now - blob.seen_at <= max_age
+                and ARENA_MIN_X - margin_x <= blob.x <= ARENA_MAX_X + margin_x
+                and ARENA_MIN_Y - margin_y <= blob.y <= ARENA_MAX_Y + margin_y
+            ),
+            key=lambda blob: blob.slot,
+        )
+
+    def radar_blob_in_lock_zone(self, player_id, blob):
+        x1, x2, y1, y2 = self.radar_lock_zone(player_id)
+        if player_id == 101:
+            return x1 <= blob.x <= x2 and y1 <= blob.y <= y2
+        return x1 < blob.x <= x2 and y1 <= blob.y <= y2
+
+    def radar_lock_blob_for_player(self, player_id, now):
+        player = self.players[player_id]
+        candidates = [
+            blob for blob in self.live_radar_blobs(now, RADAR_LOCK_RECENT_S, margin_x=0.95, margin_y=1.05)
+            if self.radar_blob_in_lock_zone(player_id, blob)
+        ]
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda blob: (
+                math.hypot(blob.x - player.x, (blob.y - player.y) * 0.65),
+                now - blob.seen_at,
+                blob.slot,
+            ),
+        )
+
+    def player_radar_locked(self, player, now):
+        if self.args.fake:
+            return True
+        return self.radar_lock_blob_for_player(player.player_id, now) is not None
+
+    def radar_lock_pair(self, now):
+        p1_blob = self.radar_lock_blob_for_player(101, now)
+        p2_blob = self.radar_lock_blob_for_player(102, now)
+        if p1_blob is None or p2_blob is None:
+            return None
+        if p1_blob.slot == p2_blob.slot:
+            return None
+        if abs(p1_blob.seen_at - p2_blob.seen_at) > RADAR_LOCK_PAIR_SYNC_S:
+            return None
+        if math.hypot(p1_blob.x - p2_blob.x, p1_blob.y - p2_blob.y) < RADAR_LOCK_MIN_SEPARATION_M:
+            return None
+        return p1_blob, p2_blob
+
+    def radar_locks_ready(self, now):
+        if self.args.fake:
+            return True
+        return self.radar_lock_pair(now) is not None
+
+    def update_radar_lock(self, now):
+        if self.radar_lock_transitioning:
+            return
+        if self.radar_locks_ready(now):
+            if self.radar_lock_ready_since <= 0.0:
+                self.radar_lock_ready_since = now
+                if now - self.radar_lock_last_sound_at > 1.0:
+                    self.sounds.play("menu_lock")
+                    self.radar_lock_last_sound_at = now
+                self.add_screen_flash(PALETTE["soup"], 0.10, 48)
+                self.shake(0.12, 6.0)
+            if now - self.radar_lock_ready_since >= RADAR_LOCK_HOLD_S:
+                self.radar_lock_transitioning = True
+                self.menu_ignore_actions_until = now + 0.65
+                if self.radar_lock_next_state == "menu":
+                    self.open_character_select(require_radar_lock=False)
+                else:
+                    self.start_forward_calibration()
+        else:
+            self.radar_lock_ready_since = 0.0
+
+    def forward_calibration_phase(self, elapsed):
+        if elapsed < FORWARD_CALIBRATION_TITLE_DURATION:
+            return 0
+        point_elapsed = elapsed - FORWARD_CALIBRATION_TITLE_DURATION
+        if point_elapsed < FORWARD_CALIBRATION_POINT_DURATION:
+            return 1 + int(point_elapsed)
+        if elapsed < FORWARD_CALIBRATION_TOTAL:
+            return 4
+        return 5
+
+    def apply_forward_calibration(self):
+        for player in self.players.values():
+            if self.args.fake:
+                player.raw_heading = 0.0
+                player.heading = 0.0
+                self.heading_zero_offsets[player.player_id] = 0.0
+                continue
+            if player.last_seen_at and time.time() - player.last_seen_at <= PLAYER_PACKET_TIMEOUT:
+                self.heading_zero_offsets[player.player_id] = player.raw_heading
+                player.heading = 0.0
+        self.log("round aim calibrated")
+
+    def update_forward_calibration(self, now):
+        elapsed = max(0.0, now - self.forward_calibration_started_at)
+        phase = self.forward_calibration_phase(elapsed)
+        if phase != self.forward_calibration_last_step:
+            self.forward_calibration_last_step = phase
+            if phase == 0:
+                self.round_message = "CALIBRATION TIME"
+                self.play_fight_sound("fight_count_3", 0.65)
+                self.add_screen_flash(PALETTE["soup"], 0.16, 88)
+                self.shake(0.12, 6.0)
+            elif phase in (1, 2, 3):
+                self.round_message = "POINT FORWARD NOW"
+                sound = ("fight_count_3", "fight_count_2", "fight_count_1")[phase - 1]
+                color = self.players[101].color if phase % 2 else self.players[102].color
+                self.play_fight_sound(sound)
+                self.add_screen_flash(color, 0.13, 86)
+                self.spawn_countdown_fx(color, phase)
+                self.shake(0.10, 5.5 + phase)
+            elif phase == 4:
+                if not self.forward_calibration_applied:
+                    self.apply_forward_calibration()
+                    self.forward_calibration_applied = True
+                self.round_message = "CALIBRATED"
+                self.sounds.play("ready")
+                self.add_screen_flash(PALETTE["white"], 0.18, 130)
+                self.shake(0.16, 8.5)
+        if phase >= 5:
+            self.start_fight_countdown()
+
+    def open_character_select(self, require_radar_lock=True):
+        if require_radar_lock and not self.args.fake and not self.radar_locks_ready(time.time()):
+            self.start_radar_lock("menu")
+            return
         now = time.time()
         self.match_state = "select"
         self.round_message = "CHOOSE YOUR SOUP FIGHTER"
@@ -1734,6 +1943,13 @@ class SoupocalypseApp:
         self.round_presentation_started_at = 0.0
         self.round_countdown_started_at = 0.0
         self.round_countdown_last_step = -1
+        self.forward_calibration_started_at = 0.0
+        self.forward_calibration_last_step = -1
+        self.forward_calibration_applied = False
+        self.radar_lock_started_at = 0.0
+        self.radar_lock_ready_since = 0.0
+        self.radar_lock_next_state = "menu"
+        self.radar_lock_transitioning = False
         self.match_win_started_at = 0.0
         self.pending_actions.clear()
         self.beams.clear()
@@ -1806,9 +2022,11 @@ class SoupocalypseApp:
         if self.match_state in MENU_STATES:
             selected = any(state.selected_index is not None for state in self.menu_players.values())
             return "lobby2" if selected else "lobby1"
+        if self.match_state == "radar_lock":
+            return "lobby1"
         if self.match_state == "match_over":
             return "win1"
-        if self.match_state in ("playing", "round_over", "round_countdown"):
+        if self.match_state in ("playing", "round_over", "round_countdown", "forward_calibration"):
             match_point = any(player.wins >= WIN_ROUNDS - 1 for player in self.players.values())
             if (
                 match_point
@@ -1839,6 +2057,22 @@ class SoupocalypseApp:
                     speed, resolution, time.time()
                 )
                 self.update_identity_from_radar()
+            elif tag == "RADAR_STATUS" and len(parts) >= 10:
+                self.radar_status_seen_at = time.time()
+                self.radar_status = {
+                    "baud": int(float(parts[1])),
+                    "rx_bytes": int(float(parts[2])),
+                    "valid_frames": int(float(parts[3])),
+                    "bad_frames": int(float(parts[4])),
+                    "dropped_bytes": int(float(parts[5])),
+                    "byte_age_ms": int(float(parts[6])),
+                    "valid_age_ms": int(float(parts[7])),
+                    "buffer_len": int(float(parts[8])),
+                    "bytes_since_baud": int(float(parts[9])),
+                    "tail": parts[10] if len(parts) >= 11 else "",
+                    "rx_pin": int(float(parts[11])) if len(parts) >= 12 and parts[11] else 16,
+                    "tx_pin": int(float(parts[12])) if len(parts) >= 13 and parts[12] else 17,
+                }
             elif tag == "PLAYER" and len(parts) >= 6:
                 pid = int(parts[1])
                 heading = float(parts[2])
@@ -1870,13 +2104,15 @@ class SoupocalypseApp:
                 pid = int(parts[1])
                 heading = float(parts[2])
                 if pid in self.players:
-                    self.players[pid].heading = heading
+                    raw_heading = normalize_deg(heading)
+                    self.players[pid].raw_heading = raw_heading
+                    self.players[pid].heading = normalize_deg(raw_heading - self.heading_zero_offsets.get(pid, 0.0))
             elif tag == "MAGCAL":
                 self.handle_magcal_line(parts)
             elif tag == "PLAYERCMD_SENT":
                 self.mark_magcal_command_sent(parts)
                 self.log(line[:90])
-            elif tag in ("LOG", "BRIDGE_BOOT", "WARN", "ERR", "PLAYERCMD_SENT", "PLAYERCMD_ERR"):
+            elif tag in ("LOG", "BRIDGE_BOOT", "RADAR_BAUD", "WARN", "ERR", "PLAYERCMD_SENT", "PLAYERCMD_ERR"):
                 self.log(line[:90])
         except ValueError:
             self.log(f"bad line: {line[:80]}")
@@ -1896,7 +2132,9 @@ class SoupocalypseApp:
             if action != ACTION_NONE:
                 self.log(f"unknown P{pid} action={action} seq={seq}")
             return
-        player.heading = normalize_deg(heading)
+        raw_heading = normalize_deg(heading)
+        player.raw_heading = raw_heading
+        player.heading = normalize_deg(raw_heading - self.heading_zero_offsets.get(pid, 0.0))
         player.last_seen_at = now
         if rssi is not None and rssi < 0:
             player.rssi = rssi if player.rssi is None else player.rssi * 0.85 + rssi * 0.15
@@ -1908,12 +2146,7 @@ class SoupocalypseApp:
 
     def update_identity_from_radar(self):
         now = time.time()
-        blobs = [
-            blob for blob in self.radar_blobs.values()
-            if blob.resolution > 0 and now - blob.seen_at < RADAR_BLOB_TIMEOUT and
-            ARENA_MIN_X - 0.7 <= blob.x <= ARENA_MAX_X + 0.7 and
-            ARENA_MIN_Y - 0.8 <= blob.y <= ARENA_MAX_Y + 0.8
-        ]
+        blobs = self.live_radar_blobs(now)
         if not blobs:
             return
         left_blobs = [blob for blob in blobs if blob.x <= RADAR_SPLIT_X]
@@ -2081,6 +2314,8 @@ class SoupocalypseApp:
         if state is None:
             return
         now = time.time()
+        if now < self.menu_ignore_actions_until:
+            return
         if action == ACTION_BEAM and state.selected_index is None:
             index = state.hover_index
             if index is None or not (0 <= index < len(CHARACTER_SLOTS)):
@@ -2393,7 +2628,10 @@ class SoupocalypseApp:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
                 elif event.key == pygame.K_RETURN:
-                    if self.match_state in MENU_STATES:
+                    if self.match_state == "radar_lock":
+                        self.sounds.play("menu_select")
+                        self.open_character_select(require_radar_lock=False)
+                    elif self.match_state in MENU_STATES:
                         if self.all_menu_players_selected():
                             self.start_menu_countdown()
                             self.play_menu_sound("menu_select", 0.9)
@@ -2496,6 +2734,12 @@ class SoupocalypseApp:
 
         if self.match_state == "round_over" and now >= self.round_reset_at:
             self.start_next_round_countdown()
+
+        if self.match_state == "radar_lock":
+            self.update_radar_lock(now)
+
+        if self.match_state == "forward_calibration":
+            self.update_forward_calibration(now)
 
         if self.match_state == "round_countdown":
             self.update_round_countdown(now)
@@ -3311,6 +3555,11 @@ class SoupocalypseApp:
         rect = self.world_rect()
         return int(meters / (ARENA_MAX_X - ARENA_MIN_X) * rect.width)
 
+    def world_zone_rect(self, x1, x2, y1, y2, offset=(0, 0)):
+        left, top = self.world_to_screen(min(x1, x2), max(y1, y2), offset)
+        right, bottom = self.world_to_screen(max(x1, x2), min(y1, y2), offset)
+        return pygame.Rect(left, top, right - left, bottom - top)
+
     def render(self):
         now = time.time()
         offset = (0, 0)
@@ -3341,6 +3590,8 @@ class SoupocalypseApp:
         self.draw_hud()
         self.draw_messages()
         self.draw_round_presentation()
+        self.draw_radar_lock_overlay()
+        self.draw_forward_calibration_overlay()
         self.draw_round_countdown_overlay()
         self.draw_match_win_screen()
         self.draw_magcal_overlay()
@@ -5348,6 +5599,288 @@ class SoupocalypseApp:
             pygame.draw.rect(self.screen, PALETTE["dark_brown"], bg, border_radius=14)
             pygame.draw.rect(self.screen, PALETTE["light_brown"], bg, 2, border_radius=14)
             self.screen.blit(text, rect)
+
+    def draw_big_center_label(self, font, text, color, center, max_width=None, outline=4):
+        surf = self.fit_text(font, text, max_width or self.screen.get_width() - 120, color)
+        rect = surf.get_rect(center=center)
+        shadow = surf.copy()
+        shadow.fill((0, 0, 0, 210), special_flags=pygame.BLEND_RGBA_MULT)
+        for dx, dy in ((-outline, 0), (outline, 0), (0, -outline), (0, outline), (outline, outline)):
+            self.screen.blit(shadow, rect.move(dx, dy))
+        self.screen.blit(surf, rect)
+        return rect
+
+    def draw_radar_lock_overlay(self):
+        if self.match_state != "radar_lock":
+            return
+        now = time.time()
+        w, h = self.screen.get_size()
+        arena = self.world_rect()
+        lock_blobs = {
+            101: self.radar_lock_blob_for_player(101, now),
+            102: self.radar_lock_blob_for_player(102, now),
+        }
+        fresh_blobs = self.live_radar_blobs(now, RADAR_LOCK_RECENT_S, margin_x=1.1, margin_y=1.1)
+        seen_blobs = self.live_radar_blobs(now, RADAR_LOCK_DRAW_RECENT_S, margin_x=1.2, margin_y=1.2)
+        last_frame_age = None
+        last_target_age = None
+        if self.radar_blobs:
+            frame_ages = [now - blob.seen_at for blob in self.radar_blobs.values() if blob.seen_at > 0.0]
+            target_ages = [now - blob.seen_at for blob in self.radar_blobs.values() if blob.resolution > 0 and blob.seen_at > 0.0]
+            if frame_ages:
+                last_frame_age = min(frame_ages)
+            if target_ages:
+                last_target_age = min(target_ages)
+        radar_status_age = now - self.radar_status_seen_at if self.radar_status_seen_at > 0.0 else None
+        radar_uart_recent = radar_status_age is not None and radar_status_age <= 2.5
+
+        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 138))
+        pygame.draw.polygon(
+            overlay,
+            rgba(PALETTE["soup_deep"], 58),
+            [(-80, 0), (w * 0.47, 0), (w * 0.30, h), (-120, h)],
+        )
+        pygame.draw.polygon(
+            overlay,
+            rgba(PALETTE["soup"], 44),
+            [(w + 120, 0), (w * 0.53, 0), (w * 0.70, h), (w + 80, h)],
+        )
+        self.screen.blit(overlay, (0, 0))
+
+        for i in range(22):
+            y = (i * 57 + now * 58) % (h + 90) - 45
+            color = (PALETTE["white"], PALETTE["soup"], PALETTE["soup_deep"])[i % 3]
+            self.draw_slanted_strip(
+                (i * 73 + now * 84) % (w + 240) - 160,
+                y,
+                160 + (i % 4) * 38,
+                5 + (i % 3) * 3,
+                -0.48,
+                rgba(color, 28 + (i % 4) * 10),
+            )
+        self.draw_halftone_field((arena.left + 62, arena.bottom - 62), 190, PALETTE["soup_deep"], 0.46, now)
+        self.draw_halftone_field((arena.right - 62, arena.top + 58), 190, PALETTE["soup"], 0.42, now + 0.7)
+
+        center_gap = self.world_zone_rect(
+            RADAR_SPLIT_X - RADAR_LOCK_CENTER_DEADZONE_M,
+            RADAR_SPLIT_X + RADAR_LOCK_CENTER_DEADZONE_M,
+            ARENA_MIN_Y - 0.08,
+            ARENA_MAX_Y + 0.08,
+        )
+        pygame.draw.rect(self.screen, rgba(PALETTE["bg"], 58), center_gap, border_radius=8)
+        for edge_x in (center_gap.left, center_gap.right):
+            self.draw_slanted_strip(edge_x - 12, center_gap.top + 12, 24, center_gap.height - 24, -0.15, rgba(PALETTE["soup"], 48))
+
+        pulse = 0.72 + 0.28 * math.sin(now * 7.0)
+        for pid, label, side_text in ((101, "P1", "LEFT START FIELD"), (102, "P2", "RIGHT START FIELD")):
+            player = self.players[pid]
+            character = self.character_for_player(player)
+            blob = lock_blobs[pid]
+            locked = self.player_radar_locked(player, now)
+            zone = self.world_zone_rect(*self.radar_lock_zone(pid))
+            zone_theme = PALETTE["soup_deep"] if pid == 101 else (255, 191, 66)
+            zone_highlight = PALETTE["soup"] if pid == 101 else PALETTE["light_brown"]
+            fill_alpha = 108 + 55 * pulse if locked else 54 + 34 * pulse
+            border_alpha = 245 if locked else 155 + 70 * pulse
+            pygame.draw.rect(self.screen, rgba(zone_theme, fill_alpha), zone, border_radius=18)
+            pygame.draw.rect(self.screen, rgba(zone_highlight, border_alpha), zone, 5 if locked else 3, border_radius=18)
+            pygame.draw.rect(self.screen, rgba(PALETTE["white"], 90 if locked else 45), zone.inflate(-20, -20), 2, border_radius=12)
+            if locked:
+                self.draw_starburst(zone.center, min(zone.width, zone.height) * 0.36, zone_highlight, 88 * pulse, seed=pid)
+            else:
+                self.draw_jagged_splash(zone.center, min(zone.width, zone.height) * 0.24, zone_theme, pid + 18, alpha=34, stretch=(1.25, 0.75))
+            title = f"{label} {side_text}"
+            status = "LOCKED" if locked else "STEP HERE"
+            self.draw_big_center_label(self.big_font, title, PALETTE["white"], (zone.centerx, zone.centery - 24), zone.width - 48, outline=3)
+            status_color = zone_highlight if locked else PALETTE["soup"]
+            self.draw_big_center_label(self.font, status, status_color, (zone.centerx, zone.centery + 38), zone.width - 48, outline=3)
+            detail_rect = pygame.Rect(zone.left + 24, zone.top + 22, min(300, zone.width - 48), 86)
+            self.draw_skew_panel(detail_rect.move(4, 5), (0, 0, 0, 150), None, cut=12)
+            self.draw_skew_panel(
+                detail_rect,
+                rgba(PALETTE["panel_2"], 228),
+                rgba(zone_highlight if locked else zone_theme, 205),
+                cut=12,
+                border_width=3,
+            )
+            detail_title = "SIGNATURE FOUND" if blob else "WAITING FOR TARGET"
+            detail = self.small_font.render(detail_title, True, zone_highlight if blob else PALETTE["soup"])
+            self.screen.blit(detail, (detail_rect.left + 16, detail_rect.top + 12))
+            if blob:
+                age_ms = int(max(0.0, now - blob.seen_at) * 1000)
+                line = f"T{blob.slot}  x={blob.x:+.2f}m  y={blob.y:.2f}m  {age_ms}ms"
+            else:
+                side_name = "LEFT" if pid == 101 else "RIGHT"
+                line = f"STEP DEEPER INTO THE {side_name} FIELD"
+            line_surf = self.fit_text(self.small_font, line, detail_rect.width - 28, PALETTE["beige"])
+            self.screen.blit(line_surf, (detail_rect.left + 16, detail_rect.top + 47))
+
+        pygame.draw.line(self.screen, rgba(PALETTE["white"], 110 + 50 * pulse), (arena.centerx, arena.top - 8), (arena.centerx, arena.bottom + 8), 2)
+        split_label = self.small_font.render("P1 DEEP LEFT     TWO DUELISTS REQUIRED     P2 DEEP RIGHT", True, PALETTE["beige"])
+        self.draw_skew_panel(split_label.get_rect(center=(arena.centerx, arena.bottom + 22)).inflate(28, 10), rgba(PALETTE["bg"], 210), rgba(PALETTE["soup"], 170), cut=8, border_width=2)
+        self.screen.blit(split_label, split_label.get_rect(center=(arena.centerx, arena.bottom + 22)))
+
+        for blob in seen_blobs:
+            sx, sy = self.world_to_screen(blob.x, blob.y)
+            age = max(0.0, now - blob.seen_at)
+            live = age <= RADAR_LOCK_RECENT_S
+            if blob.x <= RADAR_SPLIT_X - RADAR_LOCK_CENTER_DEADZONE_M:
+                side_color = PALETTE["soup_deep"]
+            elif blob.x >= RADAR_SPLIT_X + RADAR_LOCK_CENTER_DEADZONE_M:
+                side_color = PALETTE["soup"]
+            else:
+                side_color = PALETTE["muted"]
+            color = side_color if live else PALETTE["muted"]
+            alpha = 245 if live else 105
+            ring = 20 + int(8 * math.sin(now * 9.0 + blob.slot))
+            pygame.draw.circle(self.screen, rgba(color, 42 if live else 24), (sx, sy), ring + 18, 0)
+            pygame.draw.circle(self.screen, rgba(PALETTE["white"], alpha), (sx, sy), ring + 4, 3)
+            pygame.draw.circle(self.screen, rgba(color, alpha), (sx, sy), ring, 5)
+            pygame.draw.circle(self.screen, PALETTE["white"] if live else PALETTE["muted"], (sx, sy), 5)
+            tag = f"T{blob.slot}"
+            tag_surf = self.font.render(tag, True, PALETTE["white"])
+            tag_bg = tag_surf.get_rect(center=(sx, sy - ring - 22)).inflate(18, 8)
+            self.draw_skew_panel(tag_bg.move(3, 4), (0, 0, 0, 155), None, cut=6)
+            self.draw_skew_panel(tag_bg, rgba(PALETTE["soup_deep"] if live else PALETTE["panel_2"], 232), rgba(color, 210), cut=6, border_width=2)
+            self.screen.blit(tag_surf, tag_surf.get_rect(center=tag_bg.center))
+            coord = self.small_font.render(f"{blob.x:+.2f},{blob.y:.2f}m  res {blob.resolution}", True, PALETTE["beige"])
+            coord_rect = coord.get_rect(center=(sx, sy + ring + 19))
+            self.screen.blit(coord, coord_rect)
+
+        panel = pygame.Rect(0, 0, min(880, w - 110), 132)
+        panel.center = (w // 2, max(112, arena.top - 36))
+        self.draw_skew_panel(panel.move(0, 7), (0, 0, 0, 180), None, cut=24)
+        self.draw_skew_panel(panel, rgba(PALETTE["panel_2"], 242), rgba(PALETTE["soup_deep"], 230), cut=24, border_width=5)
+        self.draw_slanted_strip(panel.left + 30, panel.top + 16, panel.width - 60, 8, -0.45, rgba(PALETTE["soup_deep"], 155))
+        self.draw_slanted_strip(panel.left + 50, panel.bottom - 20, panel.width - 100, 6, -0.45, rgba(PALETTE["white"], 72))
+        ready = self.radar_locks_ready(now)
+        if last_frame_age is None:
+            if radar_uart_recent:
+                baud = self.radar_status.get("baud", "?")
+                rx_bytes = self.radar_status.get("rx_bytes", 0)
+                valid_frames = self.radar_status.get("valid_frames", 0)
+                bad_frames = self.radar_status.get("bad_frames", 0)
+                dropped = self.radar_status.get("dropped_bytes", 0)
+                byte_age = self.radar_status.get("byte_age_ms", -1)
+                bytes_since_baud = self.radar_status.get("bytes_since_baud", 0)
+                tail = self.radar_status.get("tail", "")
+                rx_pin = self.radar_status.get("rx_pin", 16)
+                tx_pin = self.radar_status.get("tx_pin", 17)
+                if bytes_since_baud <= 0 or byte_age < 0:
+                    radar_state = "RADAR UART SILENT"
+                    radar_detail = f"baud {baud}; no bytes on bridge RX GPIO{rx_pin}. Check LD2450 TX -> GPIO{rx_pin}, 5V, and GND."
+                elif valid_frames <= 0:
+                    radar_state = "RADAR BYTES, NO FRAMES"
+                    radar_detail = f"baud {baud}, RX{rx_pin}/TX{tx_pin}; rx {rx_bytes}, this baud {bytes_since_baud}, bad {bad_frames}, dropped {dropped}, tail {tail}"
+                else:
+                    radar_state = "RADAR FRAMES MISSED"
+                    radar_detail = f"bridge parsed {valid_frames} frames, but the display did not receive RADAR target lines"
+                state_color = PALETTE["soup_deep"]
+            else:
+                radar_state = "NO RADAR DATA"
+                radar_detail = "No RADAR or RADAR_STATUS lines yet. Check the bridge serial connection."
+                state_color = PALETTE["soup_deep"]
+        elif last_frame_age <= RADAR_LOCK_RECENT_S and fresh_blobs:
+            radar_state = f"RADAR LIVE  {len(fresh_blobs)} TARGET{'S' if len(fresh_blobs) != 1 else ''}"
+            radar_detail = f"last frame {int(last_frame_age * 1000)}ms ago"
+            state_color = PALETTE["soup"]
+        elif last_frame_age <= RADAR_LOCK_RECENT_S:
+            radar_state = "RADAR LIVE  0 TARGETS"
+            radar_detail = f"frames arriving {int(last_frame_age * 1000)}ms ago, but no resolved person targets"
+            state_color = PALETTE["soup_deep"]
+        else:
+            radar_state = "RADAR STALE"
+            if last_target_age is not None:
+                radar_detail = f"last target {last_target_age:.1f}s ago, last frame {last_frame_age:.1f}s ago"
+            else:
+                radar_detail = f"last radar frame {last_frame_age:.1f}s ago"
+            state_color = PALETTE["soup_deep"]
+        heading = "TARGET LOCKED" if ready else "TARGET LOCK"
+        sub = "Entering character select." if ready else "Two duelists. Deep left and deep right."
+        self.draw_big_center_label(self.big_font, heading, PALETTE["white"], (panel.centerx, panel.top + 46), panel.width - 70, outline=4)
+        self.draw_big_center_label(self.font, sub, state_color, (panel.centerx, panel.top + 91), panel.width - 90, outline=3)
+
+        status = pygame.Rect(panel.right - 248, panel.top + 18, 214, 40)
+        self.draw_skew_panel(status, rgba(PALETTE["bg"], 224), rgba(state_color, 220), cut=8, border_width=2)
+        status_surf = self.fit_text(self.small_font, radar_state, status.width - 20, state_color)
+        self.screen.blit(status_surf, status_surf.get_rect(center=status.center))
+
+        footer = pygame.Rect(0, 0, min(760, w - 120), 42)
+        footer.center = (w // 2, min(h - 34, arena.bottom + 66))
+        self.draw_skew_panel(footer.move(3, 4), (0, 0, 0, 150), None, cut=10)
+        self.draw_skew_panel(footer, rgba(PALETTE["bg"], 215), rgba(PALETTE["soup"], 150), cut=10, border_width=2)
+        detail_text = f"{radar_detail}     T1/T2/T3 circles are raw LD2450 targets     ENTER bypasses lock"
+        detail_surf = self.fit_text(self.small_font, detail_text, footer.width - 28, PALETTE["beige"])
+        self.screen.blit(detail_surf, detail_surf.get_rect(center=footer.center))
+
+        if ready and self.radar_lock_ready_since > 0.0:
+            hold_frac = clamp((now - self.radar_lock_ready_since) / max(0.001, RADAR_LOCK_HOLD_S), 0.0, 1.0)
+            bar = pygame.Rect(panel.left + 58, panel.bottom - 31, panel.width - 116, 10)
+            pygame.draw.rect(self.screen, rgba(PALETTE["dark_brown"], 220), bar)
+            pygame.draw.rect(self.screen, rgba(PALETTE["soup"], 245), (bar.left, bar.top, int(bar.width * hold_frac), bar.height))
+
+    def draw_forward_calibration_overlay(self):
+        if self.match_state != "forward_calibration":
+            return
+        now = time.time()
+        elapsed = max(0.0, now - self.forward_calibration_started_at)
+        phase = self.forward_calibration_phase(elapsed)
+        w, h = self.screen.get_size()
+        p1 = self.character_for_player(self.players[101])
+        p2 = self.character_for_player(self.players[102])
+        center = (w // 2, h // 2)
+        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 112))
+        pygame.draw.polygon(overlay, rgba(p1["theme"], 72), [(-80, h * 0.22), (w * 0.48, h * 0.38), (w * 0.44, h * 0.70), (-100, h * 0.86)])
+        pygame.draw.polygon(overlay, rgba(p2["theme"], 72), [(w + 80, h * 0.18), (w * 0.52, h * 0.38), (w * 0.57, h * 0.72), (w + 100, h * 0.90)])
+        self.screen.blit(overlay, (0, 0), special_flags=pygame.BLEND_ADD)
+
+        panel = pygame.Rect(0, 0, min(920, w - 100), 230)
+        panel.center = center
+        self.draw_skew_panel(panel.move(0, 9), (0, 0, 0, 190), None, cut=34)
+        self.draw_skew_panel(panel, rgba(PALETTE["panel"], 236), rgba(PALETTE["soup"], 235), cut=34, border_width=4)
+        for i in range(6):
+            y = panel.top + 22 + i * 33 + math.sin(now * 5.0 + i) * 4
+            self.draw_slanted_strip(panel.left + 42 + i * 7, y, panel.width - 84, 6, -0.45, rgba(PALETTE["soup_deep"], 54 + i * 8))
+
+        if phase == 0:
+            title = "CALIBRATION TIME"
+            subtitle = "Get ready to aim both controllers forward."
+            accent = PALETTE["soup"]
+            number = ""
+        elif phase in (1, 2, 3):
+            remaining = 4 - phase
+            title = "POINT FORWARD NOW"
+            subtitle = "Aim at the Last Bowl. Hold steady."
+            accent = PALETTE["white"]
+            number = str(remaining)
+        else:
+            title = "CALIBRATED"
+            subtitle = "Forward is locked. Get ready."
+            accent = PALETTE["soup"]
+            number = ""
+
+        wobble = math.sin(now * 18.0) * (2 if phase in (1, 2, 3) else 1)
+        self.draw_starburst((panel.centerx, panel.centery - 42), 150 + 18 * math.sin(now * 6), accent, 110, seed=phase + 99)
+        self.draw_big_center_label(self.title_font, title, accent, (panel.centerx + wobble, panel.top + 72), panel.width - 70, outline=5)
+        self.draw_big_center_label(self.font, subtitle, PALETTE["beige"], (panel.centerx, panel.top + 132), panel.width - 80, outline=3)
+
+        if number:
+            badge = pygame.Rect(0, 0, 92, 72)
+            badge.center = (panel.centerx, panel.bottom - 42)
+            self.draw_skew_panel(badge.move(0, 5), (0, 0, 0, 170), None, cut=12)
+            self.draw_skew_panel(badge, rgba(PALETTE["soup_deep"], 235), rgba(PALETTE["white"], 220), cut=12, border_width=3)
+            self.draw_big_center_label(self.big_font, number, PALETTE["white"], badge.center, badge.width - 18, outline=3)
+        else:
+            line_y = panel.bottom - 48
+            pygame.draw.line(self.screen, rgba(PALETTE["white"], 150), (panel.centerx, line_y + 22), (panel.centerx, line_y - 34), 5)
+            pygame.draw.polygon(
+                self.screen,
+                rgba(PALETTE["white"], 220),
+                [(panel.centerx, line_y - 48), (panel.centerx - 18, line_y - 20), (panel.centerx + 18, line_y - 20)],
+            )
+            self.draw_big_center_label(self.small_font, "FORWARD", PALETTE["soup"], (panel.centerx, line_y + 48), panel.width - 80, outline=2)
 
     def draw_round_presentation(self):
         if self.match_state != "round_over" or self.round_winner_id is None:
