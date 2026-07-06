@@ -53,6 +53,7 @@ MAX_HP = 3
 WIN_ROUNDS = 2
 TARGET_FPS = 60
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent.parent
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 SPRITE_DIR = BASE_DIR / "assets" / "sprites"
 GENERATED_AUDIO_DIR = BASE_DIR / "assets" / "generated_audio" / "fight"
@@ -166,15 +167,21 @@ MUSIC_TRACK_FILES = {
     "battle1": MUSIC_DIR / "battle1",
     "battle2": MUSIC_DIR / "battle2",
     "battle3": MUSIC_DIR / "battle3",
+    "win1": MUSIC_DIR / "win1",
+}
+MUSIC_TRACK_FALLBACKS = {
+    "win1": (PROJECT_DIR / "win1",),
 }
 MUSIC_GROUPS = {
     "lobby": ("lobby1", "lobby2"),
     "battle": ("battle1", "battle2", "battle3"),
+    "win": ("win1",),
 }
-MUSIC_TOTAL_CHANNELS = 32
 MUSIC_RESERVED_CHANNELS = len(MUSIC_TRACK_FILES)
 PRIORITY_SOUND_CHANNELS = 3
-RESERVED_MIXER_CHANNELS = MUSIC_RESERVED_CHANNELS + PRIORITY_SOUND_CHANNELS
+SFX_SOUND_CHANNELS = 18
+RESERVED_MIXER_CHANNELS = MUSIC_RESERVED_CHANNELS + PRIORITY_SOUND_CHANNELS + SFX_SOUND_CHANNELS
+MUSIC_TOTAL_CHANNELS = RESERVED_MIXER_CHANNELS + 8
 MUSIC_MASTER_VOLUME = 0.625
 MUSIC_FADE_SPEED = 1.55
 MUSIC_GROUP_FADE_MS = 700
@@ -953,6 +960,8 @@ class SoundBank:
         self.music_active_group = ""
         self.priority_channels = []
         self.priority_channel_index = 0
+        self.sfx_channels = []
+        self.sfx_channel_index = 0
         if not enabled:
             return
         try:
@@ -966,6 +975,9 @@ class SoundBank:
             first_priority_channel = MUSIC_RESERVED_CHANNELS
             for index in range(PRIORITY_SOUND_CHANNELS):
                 self.priority_channels.append(pygame.mixer.Channel(first_priority_channel + index))
+            first_sfx_channel = MUSIC_RESERVED_CHANNELS + PRIORITY_SOUND_CHANNELS
+            for index in range(SFX_SOUND_CHANNELS):
+                self.sfx_channels.append(pygame.mixer.Channel(first_sfx_channel + index))
             if ENABLE_PROCEDURAL_AUDIO_GENERATION:
                 self.ensure_generated_fight_audio()
             self.make_sounds()
@@ -1048,7 +1060,8 @@ class SoundBank:
     def load_music(self):
         self.music_sounds.clear()
         for name, path in MUSIC_TRACK_FILES.items():
-            sound = self.load_audio_file(path)
+            paths = (path,) + MUSIC_TRACK_FALLBACKS.get(name, ())
+            sound = self.load_first_audio_file(paths)
             if sound is not None:
                 self.music_sounds[name] = sound
 
@@ -1447,6 +1460,17 @@ class SoundBank:
 
     def play_sound(self, sound, volume=1.0):
         volume = clamp(volume, 0.0, 1.0)
+        for channel in self.sfx_channels:
+            if not channel.get_busy():
+                channel.play(sound)
+                channel.set_volume(volume)
+                return
+        if self.sfx_channels:
+            channel = self.sfx_channels[self.sfx_channel_index % len(self.sfx_channels)]
+            self.sfx_channel_index += 1
+            channel.play(sound)
+            channel.set_volume(volume)
+            return
         channel = pygame.mixer.find_channel(force=True)
         if channel is None:
             sound.set_volume(volume)
@@ -1783,7 +1807,7 @@ class SoupocalypseApp:
             selected = any(state.selected_index is not None for state in self.menu_players.values())
             return "lobby2" if selected else "lobby1"
         if self.match_state == "match_over":
-            return None
+            return "win1"
         if self.match_state in ("playing", "round_over", "round_countdown"):
             match_point = any(player.wins >= WIN_ROUNDS - 1 for player in self.players.values())
             if (
