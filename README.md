@@ -1,6 +1,80 @@
 # Soupocalypse: The Last Bowl
 
-Two players are mutant creatures fighting over the last bowl of authentic Chinese soup. The arena is tracked by an HLK-LD2450 radar, player controllers provide compass heading and swing actions, and the laptop renders a fast local beam duel with impact frames and crunchy interaction sounds.
+Soupocalypse is a hackathon-built physical fighting game where two players become the characters. Players move around a real arena, an mmWave radar tracks their position, handheld controllers send heading and action data, and a laptop turns everything into a chaotic soup-powered battle over the last bowl of authentic Chinese soup.
+
+***Pokémon battles in real life, except you are the Pokémon.***
+
+## Demo Link
+
+[Check out the project demo on YouTube!](https://youtu.be/ATqI9AI2axY)
+
+## Pictures
+
+![Character Selection](assets/menu.png)
+![Soupocalypse gameplay](assets/battle.png)
+![Player controllers](assets/controller1.png)
+![Player controllers](assets/controller2.png)
+![Zine Poster](assets/Soupocalypse%20Zine%20Poster.pdf)
+-->
+
+## What It Does
+
+Two players stand inside a taped arena and fight as custom Soupocalypse characters. The arena is tracked with an **HLK-LD2450 mmWave Human Radar**, while each player controller provides heading, action input, and wireless game data.
+
+The laptop runs the main Soupocalypse game engine. It receives live radar/player packets, tracks each player inside the arena, handles combat rules, renders the spectator display, plays music/SFX, and runs the full tournament-style match flow.
+
+Players can attack with a forward/down swing to fire a beam or use an up action to create a shield bubble. Hits remove HP, shields block attacks, knockouts end rounds, and the full match system tracks wins until one player claims the soup.
+
+The game features **6 organizer characters**, each with unique colors, portraits, attack styles, custom animations, impact effects, voice lines, and victory presentation.
+
+## Features
+
+* **mmWave Human Radar**: Tracks player movement in the real-world arena using the HLK-LD2450.
+* **Full Tournament System**: Best-of-3 round flow with character select, countdowns, round wins, match wins, and reset handling.
+* **6 Organizer Characters**: Playable custom characters based on organizers, each with their own portrait, theme, tagline, and attack style.
+* **Custom Animations**: Character select animations, attack effects, hit effects, shields, particles, screen shake, impact frames, KO effects, and victory screens.
+* **Soup Combat**: Beam attacks, bubble shields, HP, cooldowns, hit freeze, and crunchy SFX.
+* **Dynamic Music System**: Lobby music, battle music, low-health/intense tracks, near-win music, and victory music.
+
+## System Overview
+
+* **Player 1/2 Controllers**: Sends heading and action data for both players.
+* **HLK-LD2450 Radar**: Tracks blobs inside the arena and provides player position data.
+* **Bridge Node**: Connects the hardware system to the laptop over serial.
+* **Laptop Server**: Python/Pygame game engine, combat system, music/SFX manager, tournament controller, and spectator display.
+
+## Characters
+
+* **Aarav** - Zhifubao
+* **Will** - Builds
+* **Cisco** - Beatboxin'
+* **Tongyu** - Ceiling!
+* **Nathan** - Goober
+* **Zach Latta** - The Goat
+
+Each character has:
+
+* A portrait
+* A theme color palette
+* A custom tagline
+* A unique attack type
+* Custom fight effects
+* Select, attack, hit, and victory audio support
+
+## Firmware Map
+
+* [`code/player/player.ino`](code/player/player.ino): Firmware for the player controllers. It reads motion/heading input, detects beam/shield actions, tracks player state, and sends player packets to the server.
+* [`code/bridge/bridge.ino`](code/bridge/bridge.ino): Firmware for the bridge. It receives player and radar data, sends packets to the laptop over serial, and can trigger physical FX outputs.
+* [`firmware_d15ac61/`](firmware_d15ac61/): Additional firmware/exported hardware files from the hackathon build.
+
+## Server And Assets
+
+* [`code/server/soupocalypse.py`](code/server/soupocalypse.py): Main Python/Pygame game. It handles rendering, player tracking, combat, tournament flow, music, sound effects, fake controls, and serial input.
+* [`code/server/requirements.txt`](code/server/requirements.txt): Python dependencies.
+* [`code/server/assets/fonts/`](code/server/assets/fonts/): Fonts used by the spectator display.
+* [`code/server/assets/sprites/`](code/server/assets/sprites/): Character portraits and game sprites.
+* [`code/server/assets/music/`](code/server/assets/music/): Lobby, battle, intense battle, near-win, and victory music.
+* [`code/server/assets/generated_audio/fight/`](code/server/assets/generated_audio/fight/): Fight UI sounds, impacts, round sounds, and character voice lines.
 
 ## Run The Game
 
@@ -16,25 +90,13 @@ Run without hardware:
 python code/server/soupocalypse.py --fake
 ```
 
-The game opens native fullscreen by default. Use `--windowed` while tuning:
+The game opens native fullscreen by default. Use `--windowed` while tuning for your potential setup:
 
 ```powershell
 python code/server/soupocalypse.py --fake --windowed
 ```
 
-Headless smoke test:
-
-```powershell
-$env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; python code/server/soupocalypse.py --fake --no-audio --smoke-test 5
-```
-
-Run with the bridge:
-
-```powershell
-python code/server/soupocalypse.py --port COM4
-```
-
-Fake controls:
+## Fake Controls (super useful for testing)
 
 ```text
 P1 move: WASD
@@ -53,117 +115,18 @@ Esc: quit
 
 ## Game Rules
 
-- Best of 3 rounds.
-- Forward/down swing fires a beam.
-- Up swing creates a bubble shield.
-- Beam hit removes HP.
-- Bubble blocks one beam while active.
-- KO ends the round.
-
-The MVP intentionally does not include beam clashes, pickups, creature commands, or extra spell systems. The feel comes from the beam, bubble, hit freeze, impact frames, screen shake, particles, and original console-like sounds.
-
-## Visual Theme
-
-The laptop display uses the Fallout event palette from `fallout.hackclub.com`:
-
-```text
-dark brown #61453a
-brown #9f715d
-light brown #edd1b0
-beige #fcf1e5
-blue #38c9ff
-green #37b576
-yellow #ffebad
-coral #ff7d70
-```
-
-Downloaded site fonts live in `code/server/assets/fonts/`. `Hells-Bells.otf` is used for the big title text when available. The site's Outfit webfont is also included, but the game falls back safely if SDL_ttf cannot render a webfont on the current machine.
-
-## Serial Protocol
-
-Bridge to laptop:
-
-```text
-RADAR,slot,xCm,yCm,speed,resolution
-PLAYER,id,headingDeg,action,seq,rssi,uptimeMs
-```
-
-Actions:
-
-```text
-0 none
-1 beam
-2 bubble
-```
-
-Laptop to bridge:
-
-```text
-FX,beam_fire
-FX,beam_hit
-FX,bubble
-FX,bubble_block
-FX,ko
-FX,match_win
-RELAY,light,on,250
-RELAY,fan,on,1000
-```
-
-## Player Wiring
-
-Keep the MPU6050 wiring from FFMS and add the QMC5883L on the same I2C bus:
-
-```text
-ESP32 3V3  -> MPU6050 VCC, QMC5883L VCC, OLED VCC
-ESP32 GND  -> MPU6050 GND, QMC5883L GND, OLED GND
-GPIO21 SDA -> MPU6050 SDA + QMC5883L SDA + OLED SDA
-GPIO22 SCL -> MPU6050 SCL + QMC5883L SCL + OLED SCL
-GPIO23     -> recenter/calibrate button to GND
-```
-
-Existing FFMS player pins:
-
-```text
-MPU6050 address: 0x68
-QMC5883L typical address: 0x0D
-OLED typical address: 0x3C
-Health LEDs: GPIO 32, 33, 25, 26, 27
-FX LEDs: GPIO 16, 17, 18, 19
-```
-
-Set `PLAYER_ID` in `code/player/player.ino` to `101` for player 1 and `102` for player 2 before uploading.
-
-## Bridge Wiring
-
-```text
-ESP32 GND     -> LD2450 GND + FX supply GND
-ESP32 5V/VIN  -> LD2450 VCC if module requires 5V
-LD2450 TX     -> ESP32 RX2 GPIO16
-LD2450 RX     -> ESP32 TX2 GPIO17
-LED strip DIN -> GPIO27 through about 330 ohm resistor
-Relay/light   -> GPIO25
-Relay/fan     -> GPIO26
-Spare FX      -> GPIO18, GPIO19
-```
-
-The bridge can compile without `Adafruit_NeoPixel`; it will still drive relays/spare FX pins. If the library is installed, `FX` commands also animate a WS2812 strip.
+* Players select one of the 6 Soupocalypse characters.
+* The match is best of 3 rounds.
+* Each player starts with 3 HP.
+* A beam hit removes HP.
+* A bubble shield blocks attacks while active.
+* The winner gets the soup.
 
 ## Arena
 
-Tape the playable radar area conservatively:
+We taped the playable radar area conservatively (the radar can see a bit beyond the tape). The arena is roughly 4m wide and 3.7m deep.
 
 ```text
 x = -2.0m to +2.0m
 y = 0.8m to 4.5m
 ```
-
-Keep all player movement inside that rectangle and keep spectators outside the radar cone. Shrink the area if the radar gets unstable at the edges.
-
-## Test Checklist
-
-- Run an I2C scanner or watch boot serial output for MPU6050 and QMC5883L.
-- Press the player button while facing arena-forward to calibrate heading.
-- Verify bridge prints `RADAR` lines when people stand in the arena.
-- Verify bridge prints `PLAYER` lines with RSSI when controllers are powered.
-- Run `--fake` first to tune visuals/audio.
-- Then run with bridge serial and test beam hit, beam miss, bubble block, KO, and best-of-3 reset.

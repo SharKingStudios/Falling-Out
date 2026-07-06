@@ -289,7 +289,7 @@ CHARACTER_SLOTS = (
         "dark": (54, 43, 112),
         "highlight": (232, 225, 255),
         "accent": (255, 96, 188),
-        "tagline": "TODO",
+        "tagline": "Goober",
         "attack_type": "fire",
     },
     {
