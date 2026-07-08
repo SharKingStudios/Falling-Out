@@ -31,7 +31,7 @@
 #define HAS_OLED 0
 #endif
 
-#define PLAYER_ID 101
+#define PLAYER_ID 102
 
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
@@ -89,8 +89,8 @@ const uint32_t GESTURE_MAX_MS = 620;
 const uint32_t GESTURE_STILL_MS = 70;
 const int BEAM_DOWN_SIGN = 1;   // Current build: physical down reports positive linearZ.
 const int BUBBLE_UP_SIGN = -1;  // Current build: physical up reports negative linearZ.
-const float BEAM_DOWN_ACCEL_G = 0.46f;
-const float BUBBLE_UP_ACCEL_G = 0.46f;
+const float BEAM_DOWN_ACCEL_G = 0.23f;
+const float BUBBLE_UP_ACCEL_G = 0.23f;
 
 uint8_t broadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
