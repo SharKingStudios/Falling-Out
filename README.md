@@ -6,7 +6,7 @@ Soupocalypse is a hackathon-built physical fighting game where two players becom
 
 ## Demo Link
 
-[Check out the project demo on YouTube!](https://youtu.be/ATqI9AI2axY)
+[Check out the project demo on YouTube!](https://youtu.be/BXd05WfaruQ)
 
 ## Pictures
 
